@@ -200,16 +200,34 @@ fn launch_editor(
     recovery_snapshot: Option<PathBuf>,
     state: State<'_, ManagedHubState>,
 ) -> Result<u32, String> {
-    let editor = state
+    let installation = state
         .value
         .lock()
         .map_err(|_| "KairoHub state lock was poisoned".to_string())?
         .selected_engine
         .as_ref()
-        .and_then(|root| project::inspect_engine(root).ok())
-        .map(|installation| installation.editor);
-    project::launch_editor_with(&path, recovery_snapshot.as_deref(), editor.as_deref())
-        .map(|child| child.id())
+        .and_then(|root| project::inspect_engine(root).ok());
+    if let Some(selected) = installation.as_ref() {
+        let health = project::inspect_project(&path);
+        project::validate_project_engine_version(&health, selected)?;
+    }
+    let editor = installation
+        .as_ref()
+        .map(|selected| selected.editor.as_path());
+    project::launch_editor_with(&path, recovery_snapshot.as_deref(), editor).map(|child| child.id())
+}
+
+#[tauri::command]
+fn launch_player(path: PathBuf, state: State<'_, ManagedHubState>) -> Result<u32, String> {
+    let root = state
+        .value
+        .lock()
+        .map_err(|_| "KairoHub state lock was poisoned".to_string())?
+        .selected_engine
+        .clone()
+        .ok_or_else(|| "Select a Kairo engine installation before running a project".to_string())?;
+    let installation = project::inspect_engine(&root)?;
+    project::launch_player_with(&path, &installation).map(|child| child.id())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -242,7 +260,8 @@ pub fn run() {
             repair_project,
             recovery_snapshots,
             clone_project,
-            launch_editor
+            launch_editor,
+            launch_player
         ])
         .run(tauri::generate_context!())
         .expect("KairoHub runtime failed");

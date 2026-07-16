@@ -1,6 +1,6 @@
 # KairoHub
 
-KairoHub is the Tauri 2 project manager and process launcher for Kairo Game Engine. It validates projects before launch, creates canonical starter projects atomically, tracks recent and favorite projects, selects a registered engine installation, and starts that installation's KairoEditor in normal or explicit snapshot-recovery mode.
+KairoHub is the Tauri 2 project manager and process launcher for Kairo Game Engine. It validates projects before launch, creates canonical starter projects atomically, tracks recent and favorite projects, selects a registered engine installation, and starts that installation's KairoEditor or KairoPlayer. Editor recovery remains an explicit separate launch mode.
 
 ## Development
 
@@ -33,6 +33,7 @@ overwritten by Repair.
 - Writes new project files through same-directory temporary files.
 - Stores Hub recents/favorites in the operating system application-data directory, never in the project.
 - Spawns KairoEditor as a child process through the documented `--project` and `--no-layout-persistence` CLI.
+- Spawns KairoPlayer directly as `<player> <project.kproject>` after checking project/engine version compatibility; no command is routed through a shell.
 - Clones shallow HTTPS GitHub/GitLab repositories without invoking a shell and imports a single discovered `.kproject`.
 - Repairs only missing bootstrap manifest/scene files after the descriptor itself parses successfully.
 

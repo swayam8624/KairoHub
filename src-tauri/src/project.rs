@@ -805,6 +805,17 @@ pub struct EngineInstallation {
     pub version: String,
     pub editor: PathBuf,
     pub editor_available: bool,
+    pub player: PathBuf,
+    pub player_available: bool,
+}
+
+fn engine_executable(root: &Path, candidates: &[&str]) -> PathBuf {
+    let extension = if cfg!(windows) { ".exe" } else { "" };
+    candidates
+        .iter()
+        .map(|candidate| root.join(format!("{candidate}{extension}")))
+        .find(|candidate| candidate.is_file())
+        .unwrap_or_else(|| root.join(format!("{}{}", candidates[0], extension)))
 }
 
 pub fn inspect_engine(root: &Path) -> Result<EngineInstallation, String> {
@@ -825,16 +836,30 @@ pub fn inspect_engine(root: &Path) -> Result<EngineInstallation, String> {
         .and_then(|tail| tail.split_whitespace().next())
         .map(|value| value.trim_end_matches(')').to_string())
         .unwrap_or_else(|| "development".into());
-    let editor = if cfg!(windows) {
-        root.join("KairoEditor/build/KairoEditorApp.exe")
-    } else {
-        root.join("KairoEditor/build/KairoEditorApp")
-    };
+    let editor = engine_executable(
+        root,
+        &[
+            "build/dev-clang/KairoEditor/KairoEditorApp",
+            "build/dev/KairoEditor/KairoEditorApp",
+            "build/release/KairoEditor/KairoEditorApp",
+            "KairoEditor/build/KairoEditorApp",
+        ],
+    );
+    let player = engine_executable(
+        root,
+        &[
+            "build/dev-clang/Runtime/KairoPlayer/KairoPlayer",
+            "build/dev/Runtime/KairoPlayer/KairoPlayer",
+            "build/release/Runtime/KairoPlayer/KairoPlayer",
+        ],
+    );
     Ok(EngineInstallation {
         root: root.to_path_buf(),
         version,
         editor_available: editor.is_file(),
         editor,
+        player_available: player.is_file(),
+        player,
     })
 }
 
@@ -951,6 +976,52 @@ pub fn launch_editor_with(
     command
         .spawn()
         .map_err(|error| format!("Cannot launch KairoEditor: {error}"))
+}
+
+/// Launches the selected engine's standalone player after both KairoHub's
+/// structural inspection and KairoPlayer's own runtime parsing boundary.
+/// Command arguments are passed directly, never through a host shell.
+pub fn launch_player_with(
+    project: &Path,
+    installation: &EngineInstallation,
+) -> Result<Child, String> {
+    let health = inspect_project(project);
+    if !health.is_valid() {
+        return Err(format!(
+            "Project validation failed: {}",
+            health.errors.join("; ")
+        ));
+    }
+    validate_project_engine_version(&health, installation)?;
+    if !installation.player_available || !installation.player.is_file() {
+        return Err(format!(
+            "Selected KairoPlayer build is missing: {}",
+            installation.player.display()
+        ));
+    }
+    Command::new(&installation.player)
+        .arg(project)
+        .spawn()
+        .map_err(|error| format!("Cannot launch KairoPlayer: {error}"))
+}
+
+/// Ensures an authored project is not opened or run with a different engine
+/// contract than the one selected in KairoHub.
+pub fn validate_project_engine_version(
+    health: &ProjectHealth,
+    installation: &EngineInstallation,
+) -> Result<(), String> {
+    let descriptor = health
+        .descriptor
+        .as_ref()
+        .ok_or_else(|| "Project descriptor is unavailable after validation".to_string())?;
+    if descriptor.engine_version != installation.version {
+        return Err(format!(
+            "Project requires Kairo {}, but selected installation is Kairo {}",
+            descriptor.engine_version, installation.version
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -1139,6 +1210,50 @@ mod tests {
         let installation = inspect_engine(temporary.path()).unwrap();
         assert_eq!(installation.version, "4.2.1");
         assert!(!installation.editor_available);
+        assert!(!installation.player_available);
+    }
+
+    #[test]
+    fn engine_inspection_discovers_umbrella_preset_binaries() {
+        let temporary = tempfile::tempdir().unwrap();
+        fs::write(
+            temporary.path().join("CMakeLists.txt"),
+            "project(KairoGameEngine VERSION 0.1.0 LANGUAGES CXX)\n",
+        )
+        .unwrap();
+        let editor = temporary
+            .path()
+            .join("build/dev-clang/KairoEditor/KairoEditorApp");
+        let player = temporary
+            .path()
+            .join("build/dev-clang/Runtime/KairoPlayer/KairoPlayer");
+        fs::create_dir_all(editor.parent().unwrap()).unwrap();
+        fs::create_dir_all(player.parent().unwrap()).unwrap();
+        fs::write(&editor, b"fixture").unwrap();
+        fs::write(&player, b"fixture").unwrap();
+        let installation = inspect_engine(temporary.path()).unwrap();
+        assert!(installation.editor_available);
+        assert!(installation.player_available);
+        assert_eq!(installation.editor, editor);
+        assert_eq!(installation.player, player);
+    }
+
+    #[test]
+    fn project_launch_rejects_a_different_engine_version() {
+        let temporary = tempfile::tempdir().unwrap();
+        let project = create_project(temporary.path(), "Versioned", "Versioned").unwrap();
+        let health = inspect_project(&project);
+        let installation = EngineInstallation {
+            root: temporary.path().to_path_buf(),
+            version: "9.0.0".into(),
+            editor: temporary.path().join("Editor"),
+            editor_available: false,
+            player: temporary.path().join("Player"),
+            player_available: false,
+        };
+        let error = validate_project_engine_version(&health, &installation).unwrap_err();
+        assert!(error.contains("requires Kairo 0.1.0"));
+        assert!(error.contains("selected installation is Kairo 9.0.0"));
     }
 
     #[test]

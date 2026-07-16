@@ -27,6 +27,8 @@ type EngineInstallation = {
   version: string;
   editor: string;
   editorAvailable: boolean;
+  player: string;
+  playerAvailable: boolean;
 };
 
 type RecoverySnapshotInfo = {
@@ -205,6 +207,7 @@ function renderProjects(): void {
       <div class="project-info"><div><strong>${escapeHtml(projectTitle(path, health))}</strong><span class="health ${valid ? "ready" : "warning"}">${valid ? "Ready" : "Repair"}</span></div><small>${escapeHtml(path)}</small><p>${escapeHtml(message)}</p></div>
       <button class="icon-button favorite ${favorite ? "selected" : ""}" type="button" data-action="favorite" aria-label="${favorite ? "Remove from favorites" : "Add to favorites"}">★</button>
       <button class="button secondary" type="button" data-action="${valid ? "recovery" : "repair"}">${valid ? "Recovery" : "Repair"}</button>
+      <button class="button secondary" type="button" data-action="run" ${valid ? "" : "disabled"}>Run</button>
       <button class="button primary" type="button" data-action="open" ${valid ? "" : "disabled"}>Open editor</button>
     </article>`;
   }).join("");
@@ -214,10 +217,10 @@ function renderEngines(): void {
   const selected = engines.find((engine) => engine.root === state.selectedEngine);
   document.querySelector("#engine-name")!.textContent = selected ? `Kairo ${selected.version}` : "Engine not selected";
   document.querySelector("#engine-detail")!.textContent = selected
-    ? (selected.editorAvailable ? "Editor ready" : "Editor build missing") : "Choose an installation";
-  document.querySelector("#engine-dot")!.classList.toggle("unavailable", !selected?.editorAvailable);
+    ? (selected.editorAvailable && selected.playerAvailable ? "Editor and player ready" : "Build incomplete") : "Choose an installation";
+  document.querySelector("#engine-dot")!.classList.toggle("unavailable", !selected?.editorAvailable || !selected?.playerAvailable);
   const list = document.querySelector<HTMLDivElement>("#engine-list")!;
-  list.innerHTML = engines.length ? engines.map((engine) => `<button class="engine-row ${engine.root === state.selectedEngine ? "selected" : ""}" data-engine="${escapeHtml(engine.root)}" type="button"><span><strong>Kairo ${escapeHtml(engine.version)}</strong><small>${escapeHtml(engine.root)}</small></span><em>${engine.editorAvailable ? "Ready" : "Build editor"}</em></button>`).join("")
+  list.innerHTML = engines.length ? engines.map((engine) => `<button class="engine-row ${engine.root === state.selectedEngine ? "selected" : ""}" data-engine="${escapeHtml(engine.root)}" type="button"><span><strong>Kairo ${escapeHtml(engine.version)}</strong><small>${escapeHtml(engine.root)}</small></span><em>${engine.editorAvailable && engine.playerAvailable ? "Ready" : "Build incomplete"}</em></button>`).join("")
     : `<div class="compact-empty">No Kairo installations registered.</div>`;
 }
 
@@ -339,6 +342,9 @@ projectList.addEventListener("click", async (event) => {
       notify(health.errors.length ? health.errors.join("; ") : "Missing project files repaired");
     } else if (target.dataset.action === "recovery") {
       await showRecovery(path);
+    } else if (target.dataset.action === "run") {
+      const processId = await invoke<number>("launch_player", { path });
+      notify(`KairoPlayer launched (process ${processId})`);
     } else {
       const processId = await invoke<number>("launch_editor", { path, recoverySnapshot: null });
       notify(`KairoEditor launched (process ${processId})`);
