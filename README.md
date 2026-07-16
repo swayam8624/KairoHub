@@ -1,6 +1,6 @@
 # KairoHub
 
-KairoHub is the Tauri 2 project manager and process launcher for Kairo Game Engine. It validates projects before launch, creates canonical starter projects atomically, tracks recent and favorite projects, and can start KairoEditor in normal or recovery mode.
+KairoHub is the Tauri 2 project manager and process launcher for Kairo Game Engine. It validates projects before launch, creates canonical starter projects atomically, tracks recent and favorite projects, selects a registered engine installation, and starts that installation's KairoEditor in normal or recovery mode.
 
 ## Development
 

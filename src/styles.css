@@ -19,11 +19,12 @@ nav { display: grid; gap: 3px; }
 .nav-item { border: 0; background: transparent; color: #9ba7b0; text-align: left; padding: 10px 11px; border-radius: 5px; cursor: pointer; }
 .nav-item span { display: inline-block; width: 24px; }
 .nav-item.active { background: #252b31; color: #f4f7f8; }
-.engine-status { margin-top: auto; display: flex; gap: 10px; align-items: center; border-top: 1px solid #2a3037; padding: 17px 8px 0; }
+.engine-status { margin-top: auto; display: flex; width: 100%; gap: 10px; align-items: center; border: 0; border-top: 1px solid #2a3037; padding: 17px 8px 0; background: transparent; text-align: left; cursor: pointer; }
 .engine-status strong, .engine-status small { display: block; }
 .engine-status strong { font-size: 12px; }
 .engine-status small { color: #76838d; margin-top: 3px; font-size: 11px; }
 .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #49d79f; box-shadow: 0 0 0 3px #244a3c; }
+.status-dot.unavailable { background: #89949c; box-shadow: 0 0 0 3px #30363b; }
 
 main { min-width: 0; background: #111418; }
 .topbar { height: 116px; border-bottom: 1px solid #242a30; padding: 26px 34px; display: flex; justify-content: space-between; align-items: center; }
@@ -77,6 +78,13 @@ dialog::backdrop { background: #050709b8; }
 .path-field input { min-width: 0; }
 .field-note { color: #78858e; font-size: 11px; }
 .dialog-actions { justify-content: flex-end; margin-top: 5px; }
+.engine-list { display: grid; gap: 6px; max-height: 300px; overflow: auto; }
+.engine-row { display: flex; justify-content: space-between; align-items: center; border: 1px solid #303840; border-radius: 5px; padding: 11px; background: #14191d; color: #dfe6e9; text-align: left; cursor: pointer; }
+.engine-row.selected { border-color: #48d39e; background: #183028; }
+.engine-row strong, .engine-row small { display: block; }
+.engine-row small { color: #7d8992; margin-top: 4px; }
+.engine-row em { color: #71dcb2; font-size: 10px; font-style: normal; text-transform: uppercase; }
+.compact-empty { border: 1px dashed #343c43; border-radius: 5px; padding: 24px; color: #7d8992; text-align: center; font-size: 12px; }
 .toast { position: fixed; right: 22px; bottom: 22px; max-width: 420px; padding: 11px 14px; border: 1px solid #2d5c49; border-radius: 5px; background: #18372b; color: #c8f8e4; font-size: 12px; opacity: 0; transform: translateY(8px); pointer-events: none; transition: 150ms ease; }
 .toast.visible { opacity: 1; transform: translateY(0); }
 .toast.error { border-color: #754045; background: #3c2427; color: #ffd5d8; }

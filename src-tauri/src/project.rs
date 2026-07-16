@@ -353,6 +353,46 @@ pub fn discover_editor() -> Result<PathBuf, String> {
         })
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EngineInstallation {
+    pub root: PathBuf,
+    pub version: String,
+    pub editor: PathBuf,
+    pub editor_available: bool,
+}
+
+pub fn inspect_engine(root: &Path) -> Result<EngineInstallation, String> {
+    let manifest = root.join("CMakeLists.txt");
+    let source = fs::read_to_string(&manifest).map_err(|error| {
+        format!(
+            "Cannot read engine manifest {}: {error}",
+            manifest.display()
+        )
+    })?;
+    if !source.contains("project(KairoGameEngine") {
+        return Err("Selected directory is not a KairoGameEngine umbrella checkout".into());
+    }
+    let version = source
+        .lines()
+        .find(|line| line.contains("project(KairoGameEngine") && line.contains("VERSION"))
+        .and_then(|line| line.split("VERSION").nth(1))
+        .and_then(|tail| tail.split_whitespace().next())
+        .map(|value| value.trim_end_matches(')').to_string())
+        .unwrap_or_else(|| "development".into());
+    let editor = if cfg!(windows) {
+        root.join("KairoEditor/build/KairoEditorApp.exe")
+    } else {
+        root.join("KairoEditor/build/KairoEditorApp")
+    };
+    Ok(EngineInstallation {
+        root: root.to_path_buf(),
+        version,
+        editor_available: editor.is_file(),
+        editor,
+    })
+}
+
 fn validate_clone_folder(folder_name: &str) -> Result<(), String> {
     if folder_name.is_empty()
         || !folder_name.chars().all(|character| {
@@ -429,7 +469,11 @@ pub fn clone_project(
     }
 }
 
-pub fn launch_editor(project: &Path, recovery_mode: bool) -> Result<Child, String> {
+pub fn launch_editor_with(
+    project: &Path,
+    recovery_mode: bool,
+    editor_override: Option<&Path>,
+) -> Result<Child, String> {
     let health = inspect_project(project);
     if !health.is_valid() {
         return Err(format!(
@@ -437,7 +481,16 @@ pub fn launch_editor(project: &Path, recovery_mode: bool) -> Result<Child, Strin
             health.errors.join("; ")
         ));
     }
-    let editor = discover_editor()?;
+    let editor = match editor_override {
+        Some(editor) if editor.is_file() => editor.to_path_buf(),
+        Some(editor) => {
+            return Err(format!(
+                "Selected KairoEditor build is missing: {}",
+                editor.display()
+            ));
+        }
+        None => discover_editor()?,
+    };
     let mut command = Command::new(editor);
     command.arg("--project").arg(project);
     if recovery_mode {
@@ -450,9 +503,12 @@ pub fn launch_editor(project: &Path, recovery_mode: bool) -> Result<Child, Strin
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[serde(default)]
 pub struct HubState {
     pub recent_projects: Vec<PathBuf>,
     pub favorites: BTreeSet<PathBuf>,
+    pub engine_roots: Vec<PathBuf>,
+    pub selected_engine: Option<PathBuf>,
 }
 
 impl HubState {
@@ -468,6 +524,12 @@ impl HubState {
         } else {
             self.favorites.remove(&project);
         }
+    }
+
+    pub fn register_engine(&mut self, root: PathBuf) {
+        self.engine_roots.retain(|existing| existing != &root);
+        self.engine_roots.insert(0, root.clone());
+        self.selected_engine = Some(root);
     }
 }
 
@@ -541,5 +603,31 @@ mod tests {
             state.recent_projects[0],
             PathBuf::from("Project12.kproject")
         );
+    }
+
+    #[test]
+    fn engine_registration_is_unique_and_selected() {
+        let mut state = HubState::default();
+        state.register_engine(PathBuf::from("/engines/kairo-a"));
+        state.register_engine(PathBuf::from("/engines/kairo-b"));
+        state.register_engine(PathBuf::from("/engines/kairo-a"));
+        assert_eq!(state.engine_roots.len(), 2);
+        assert_eq!(
+            state.selected_engine,
+            Some(PathBuf::from("/engines/kairo-a"))
+        );
+    }
+
+    #[test]
+    fn engine_inspection_reports_version_and_editor_health() {
+        let temporary = tempfile::tempdir().unwrap();
+        fs::write(
+            temporary.path().join("CMakeLists.txt"),
+            "project(KairoGameEngine VERSION 4.2.1 LANGUAGES CXX)\n",
+        )
+        .unwrap();
+        let installation = inspect_engine(temporary.path()).unwrap();
+        assert_eq!(installation.version, "4.2.1");
+        assert!(!installation.editor_available);
     }
 }

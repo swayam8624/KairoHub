@@ -1,6 +1,6 @@
 mod project;
 
-use project::{HubState, ProjectHealth};
+use project::{EngineInstallation, HubState, ProjectHealth};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -16,9 +16,45 @@ fn save_state(path: &Path, state: &HubState) -> Result<(), String> {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
     let temporary = path.with_extension("json.tmp");
+    let backup = path.with_extension("json.bak");
     let json = serde_json::to_vec_pretty(state).map_err(|error| error.to_string())?;
     fs::write(&temporary, json).map_err(|error| error.to_string())?;
-    fs::rename(temporary, path).map_err(|error| error.to_string())
+    if !path.exists() {
+        return fs::rename(temporary, path).map_err(|error| error.to_string());
+    }
+    let _ = fs::remove_file(&backup);
+    fs::rename(path, &backup)
+        .map_err(|error| format!("Cannot preserve prior Hub state: {error}"))?;
+    if let Err(error) = fs::rename(&temporary, path) {
+        let _ = fs::rename(&backup, path);
+        return Err(format!("Cannot publish Hub state: {error}"));
+    }
+    let _ = fs::remove_file(backup);
+    Ok(())
+}
+
+fn register_discovered_engine(state: &mut HubState) {
+    let mut candidates = Vec::new();
+    if let Some(root) = std::env::var_os("KAIRO_ENGINE_ROOT") {
+        candidates.push(PathBuf::from(root));
+    }
+    if let Ok(current) = std::env::current_dir() {
+        candidates.push(current.clone());
+        if let Some(parent) = current.parent() {
+            candidates.push(parent.to_path_buf());
+        }
+    }
+    if let Some(root) = candidates
+        .into_iter()
+        .find(|candidate| project::inspect_engine(candidate).is_ok())
+    {
+        if !state.engine_roots.contains(&root) {
+            state.engine_roots.push(root.clone());
+        }
+        if state.selected_engine.is_none() {
+            state.selected_engine = Some(root);
+        }
+    }
 }
 
 #[tauri::command]
@@ -61,6 +97,51 @@ fn set_favorite(
         .lock()
         .map_err(|_| "KairoHub state lock was poisoned".to_string())?;
     value.set_favorite(path, favorite);
+    save_state(&state.data_file, &value)?;
+    Ok(value.clone())
+}
+
+#[tauri::command]
+fn engine_installations(
+    state: State<'_, ManagedHubState>,
+) -> Result<Vec<EngineInstallation>, String> {
+    let value = state
+        .value
+        .lock()
+        .map_err(|_| "KairoHub state lock was poisoned".to_string())?;
+    Ok(value
+        .engine_roots
+        .iter()
+        .filter_map(|root| project::inspect_engine(root).ok())
+        .collect())
+}
+
+#[tauri::command]
+fn register_engine(
+    root: PathBuf,
+    state: State<'_, ManagedHubState>,
+) -> Result<EngineInstallation, String> {
+    let installation = project::inspect_engine(&root)?;
+    let mut value = state
+        .value
+        .lock()
+        .map_err(|_| "KairoHub state lock was poisoned".to_string())?;
+    value.register_engine(root);
+    save_state(&state.data_file, &value)?;
+    Ok(installation)
+}
+
+#[tauri::command]
+fn select_engine(root: PathBuf, state: State<'_, ManagedHubState>) -> Result<HubState, String> {
+    project::inspect_engine(&root)?;
+    let mut value = state
+        .value
+        .lock()
+        .map_err(|_| "KairoHub state lock was poisoned".to_string())?;
+    if !value.engine_roots.contains(&root) {
+        return Err("Engine installation must be registered before selection".into());
+    }
+    value.selected_engine = Some(root);
     save_state(&state.data_file, &value)?;
     Ok(value.clone())
 }
@@ -109,8 +190,20 @@ fn clone_project(
 }
 
 #[tauri::command]
-fn launch_editor(path: PathBuf, recovery_mode: bool) -> Result<u32, String> {
-    project::launch_editor(&path, recovery_mode).map(|child| child.id())
+fn launch_editor(
+    path: PathBuf,
+    recovery_mode: bool,
+    state: State<'_, ManagedHubState>,
+) -> Result<u32, String> {
+    let editor = state
+        .value
+        .lock()
+        .map_err(|_| "KairoHub state lock was poisoned".to_string())?
+        .selected_engine
+        .as_ref()
+        .and_then(|root| project::inspect_engine(root).ok())
+        .map(|installation| installation.editor);
+    project::launch_editor_with(&path, recovery_mode, editor.as_deref()).map(|child| child.id())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -119,10 +212,12 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let data_file = app.path().app_data_dir()?.join("hub-state.json");
-            let state = fs::read(&data_file)
+            let mut state: HubState = fs::read(&data_file)
                 .ok()
                 .and_then(|bytes| serde_json::from_slice(&bytes).ok())
                 .unwrap_or_default();
+            register_discovered_engine(&mut state);
+            save_state(&data_file, &state)?;
             app.manage(ManagedHubState {
                 data_file,
                 value: Mutex::new(state),
@@ -134,6 +229,9 @@ pub fn run() {
             inspect_project,
             remember_project,
             set_favorite,
+            engine_installations,
+            register_engine,
+            select_engine,
             create_project,
             repair_project,
             clone_project,

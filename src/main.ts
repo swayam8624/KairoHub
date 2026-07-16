@@ -18,6 +18,15 @@ type ProjectHealth = {
 type HubState = {
   recentProjects: string[];
   favorites: string[];
+  engineRoots: string[];
+  selectedEngine: string | null;
+};
+
+type EngineInstallation = {
+  root: string;
+  version: string;
+  editor: string;
+  editorAvailable: boolean;
 };
 
 const app = document.querySelector<HTMLDivElement>("#app");
@@ -30,7 +39,7 @@ app.innerHTML = `
       <nav aria-label="Hub navigation">
         <button class="nav-item active" type="button"><span>⌂</span> Projects</button>
       </nav>
-      <div class="engine-status"><span class="status-dot"></span><div><strong>Local engine</strong><small>Environment discovery</small></div></div>
+      <button id="engine-button" class="engine-status" type="button"><span id="engine-dot" class="status-dot unavailable"></span><div><strong id="engine-name">Engine not selected</strong><small id="engine-detail">Choose an installation</small></div></button>
     </aside>
     <main>
       <header class="topbar">
@@ -78,6 +87,13 @@ app.innerHTML = `
       <div class="dialog-actions"><button value="cancel" class="button secondary">Cancel</button><button id="confirm-clone" value="default" class="button primary">Clone project</button></div>
     </form>
   </dialog>
+  <dialog id="engine-dialog">
+    <div class="dialog-form">
+      <div><p class="eyebrow">Toolchain</p><h2>Kairo installations</h2></div>
+      <div id="engine-list" class="engine-list"></div>
+      <div class="dialog-actions"><button id="add-engine" class="button secondary" type="button">Add installation</button><button id="close-engine" class="button primary" type="button">Done</button></div>
+    </div>
+  </dialog>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 `;
 
@@ -87,8 +103,9 @@ const importDialog = document.querySelector<HTMLDialogElement>("#import-dialog")
 const createDialog = document.querySelector<HTMLDialogElement>("#create-dialog")!;
 const cloneDialog = document.querySelector<HTMLDialogElement>("#clone-dialog")!;
 const toast = document.querySelector<HTMLDivElement>("#toast")!;
-let state: HubState = { recentProjects: [], favorites: [] };
+let state: HubState = { recentProjects: [], favorites: [], engineRoots: [], selectedEngine: null };
 let healthByPath = new Map<string, ProjectHealth>();
+let engines: EngineInstallation[] = [];
 
 function escapeHtml(value: string): string {
   return value.replace(/[&<>'"]/g, (character) => ({
@@ -137,6 +154,17 @@ function renderProjects(): void {
   }).join("");
 }
 
+function renderEngines(): void {
+  const selected = engines.find((engine) => engine.root === state.selectedEngine);
+  document.querySelector("#engine-name")!.textContent = selected ? `Kairo ${selected.version}` : "Engine not selected";
+  document.querySelector("#engine-detail")!.textContent = selected
+    ? (selected.editorAvailable ? "Editor ready" : "Editor build missing") : "Choose an installation";
+  document.querySelector("#engine-dot")!.classList.toggle("unavailable", !selected?.editorAvailable);
+  const list = document.querySelector<HTMLDivElement>("#engine-list")!;
+  list.innerHTML = engines.length ? engines.map((engine) => `<button class="engine-row ${engine.root === state.selectedEngine ? "selected" : ""}" data-engine="${escapeHtml(engine.root)}" type="button"><span><strong>Kairo ${escapeHtml(engine.version)}</strong><small>${escapeHtml(engine.root)}</small></span><em>${engine.editorAvailable ? "Ready" : "Build editor"}</em></button>`).join("")
+    : `<div class="compact-empty">No Kairo installations registered.</div>`;
+}
+
 async function refreshHealth(): Promise<void> {
   healthByPath = new Map();
   renderProjects();
@@ -149,12 +177,16 @@ async function refreshHealth(): Promise<void> {
 
 async function loadState(): Promise<void> {
   state = await invoke<HubState>("hub_state");
+  engines = await invoke<EngineInstallation[]>("engine_installations");
+  renderEngines();
   await refreshHealth();
 }
 
 document.querySelector("#import-button")!.addEventListener("click", () => importDialog.showModal());
 document.querySelector("#create-button")!.addEventListener("click", () => createDialog.showModal());
 document.querySelector("#clone-button")!.addEventListener("click", () => cloneDialog.showModal());
+document.querySelector("#engine-button")!.addEventListener("click", () => document.querySelector<HTMLDialogElement>("#engine-dialog")!.showModal());
+document.querySelector("#close-engine")!.addEventListener("click", () => document.querySelector<HTMLDialogElement>("#engine-dialog")!.close());
 projectFilter.addEventListener("input", renderProjects);
 
 document.querySelector("#browse-project")!.addEventListener("click", async () => {
@@ -170,6 +202,26 @@ document.querySelector("#browse-parent")!.addEventListener("click", async () => 
 document.querySelector("#browse-clone-parent")!.addEventListener("click", async () => {
   const selected = await open({ multiple: false, directory: true });
   if (selected) document.querySelector<HTMLInputElement>("#clone-parent")!.value = selected;
+});
+
+document.querySelector("#add-engine")!.addEventListener("click", async () => {
+  const root = await open({ multiple: false, directory: true, title: "Select KairoGameEngine root" });
+  if (!root) return;
+  try {
+    await invoke<EngineInstallation>("register_engine", { root });
+    state = await invoke<HubState>("hub_state");
+    engines = await invoke<EngineInstallation[]>("engine_installations");
+    renderEngines();
+  } catch (error) { notify(String(error), true); }
+});
+
+document.querySelector("#engine-list")!.addEventListener("click", async (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-engine]");
+  if (!button) return;
+  try {
+    state = await invoke<HubState>("select_engine", { root: button.dataset.engine! });
+    renderEngines();
+  } catch (error) { notify(String(error), true); }
 });
 
 document.querySelector("#confirm-import")!.addEventListener("click", async (event) => {
