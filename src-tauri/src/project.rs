@@ -13,6 +13,19 @@ pub struct ProjectDescriptor {
     pub name: String,
     pub asset_manifest: PathBuf,
     pub startup_scene: PathBuf,
+    pub engine_version: String,
+    pub input_map: PathBuf,
+    pub rendering_profile: String,
+    pub enabled_plugins: Vec<String>,
+    pub build_profiles: Vec<ProjectBuildProfile>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectBuildProfile {
+    pub name: String,
+    pub kind: String,
+    pub output_directory: PathBuf,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -120,61 +133,147 @@ pub fn parse_project(source: &str) -> Result<ProjectDescriptor, String> {
     if source.len() as u64 > MAX_PROJECT_BYTES {
         return Err("project descriptor exceeds the 1 MiB safety limit".into());
     }
-    let mut header = false;
+    let mut version = None;
     let mut name = None;
     let mut assets = None;
     let mut startup_scene = None;
+    let mut engine_version = None;
+    let mut input_map = None;
+    let mut rendering_profile = None;
+    let mut enabled_plugins = Vec::new();
+    let mut build_profiles = Vec::new();
     for (index, line) in source.lines().enumerate() {
         let line_number = index + 1;
         let tokens = tokenize(line, line_number)?;
         if tokens.is_empty() {
             continue;
         }
-        if !header {
-            if tokens.as_slice() != ["kairo-project", "1"] {
+        if version.is_none() {
+            if tokens.len() != 2
+                || tokens[0] != "kairo-project"
+                || !matches!(tokens[1].as_str(), "1" | "2")
+            {
                 return Err(format!(
-                    "{line_number}:1: expected 'kairo-project 1' header"
+                    "{line_number}:1: expected supported 'kairo-project 1|2' header"
                 ));
             }
-            header = true;
+            version = Some(tokens[1].parse::<u32>().expect("validated project version"));
             continue;
         }
-        if tokens.len() != 2 {
-            return Err(format!(
-                "{line_number}:1: '{}' requires one value",
-                tokens[0]
-            ));
-        }
         match tokens[0].as_str() {
-            "name" if name.is_none() => name = Some(tokens[1].clone()),
-            "assets" if assets.is_none() => assets = Some(PathBuf::from(&tokens[1])),
-            "startup-scene" if startup_scene.is_none() => {
+            "name" if tokens.len() == 2 && name.is_none() => name = Some(tokens[1].clone()),
+            "assets" if tokens.len() == 2 && assets.is_none() => {
+                assets = Some(PathBuf::from(&tokens[1]))
+            }
+            "startup-scene" if tokens.len() == 2 && startup_scene.is_none() => {
                 startup_scene = Some(PathBuf::from(&tokens[1]))
+            }
+            "engine-version"
+                if tokens.len() == 2 && version == Some(2) && engine_version.is_none() =>
+            {
+                engine_version = Some(tokens[1].clone())
+            }
+            "input-map" if tokens.len() == 2 && version == Some(2) && input_map.is_none() => {
+                input_map = Some(PathBuf::from(&tokens[1]))
+            }
+            "rendering-profile"
+                if tokens.len() == 2 && version == Some(2) && rendering_profile.is_none() =>
+            {
+                rendering_profile = Some(tokens[1].clone())
+            }
+            "plugin" if tokens.len() == 2 && version == Some(2) => {
+                enabled_plugins.push(tokens[1].clone())
+            }
+            "build-profile" if tokens.len() == 4 && version == Some(2) => {
+                build_profiles.push(ProjectBuildProfile {
+                    name: tokens[1].clone(),
+                    kind: tokens[2].clone(),
+                    output_directory: PathBuf::from(&tokens[3]),
+                })
             }
             "name" | "assets" | "startup-scene" => {
                 return Err(format!(
-                    "{line_number}:1: duplicate '{}' statement",
+                    "{line_number}:1: duplicate or malformed '{}' statement",
+                    tokens[0]
+                ));
+            }
+            "engine-version" | "input-map" | "rendering-profile" | "plugin" | "build-profile" => {
+                return Err(format!(
+                    "{line_number}:1: malformed or version-incompatible '{}' statement",
                     tokens[0]
                 ));
             }
             unknown => return Err(format!("{line_number}:1: unknown statement '{unknown}'")),
         }
     }
-    if !header {
+    if version.is_none() {
         return Err("1:1: missing kairo-project header".into());
+    }
+    if version == Some(2)
+        && (engine_version.is_none()
+            || input_map.is_none()
+            || rendering_profile.is_none()
+            || build_profiles.is_empty())
+    {
+        return Err("project format 2 requires engine-version, input-map, rendering-profile, and build-profile statements".into());
     }
     let descriptor = ProjectDescriptor {
         name: name.ok_or("project requires a name statement")?,
         asset_manifest: assets.ok_or("project requires an assets statement")?,
         startup_scene: startup_scene.ok_or("project requires a startup-scene statement")?,
+        engine_version: engine_version.unwrap_or_else(|| "0.1.0".into()),
+        input_map: input_map.unwrap_or_else(|| PathBuf::from("Config/Input.kinput")),
+        rendering_profile: rendering_profile.unwrap_or_else(|| "desktop".into()),
+        enabled_plugins,
+        build_profiles: if build_profiles.is_empty() {
+            vec![
+                ProjectBuildProfile {
+                    name: "Development".into(),
+                    kind: "development".into(),
+                    output_directory: PathBuf::from("Build/Development"),
+                },
+                ProjectBuildProfile {
+                    name: "Release".into(),
+                    kind: "release".into(),
+                    output_directory: PathBuf::from("Build/Release"),
+                },
+            ]
+        } else {
+            build_profiles
+        },
     };
     if descriptor.name.trim().is_empty() || descriptor.name.contains(['\n', '\r']) {
         return Err("project name must be non-empty and single-line".into());
     }
     validate_relative_path(&descriptor.asset_manifest, "assets")?;
     validate_relative_path(&descriptor.startup_scene, "startup-scene")?;
+    validate_relative_path(&descriptor.input_map, "input-map")?;
     if descriptor.asset_manifest == descriptor.startup_scene {
         return Err("asset manifest and startup scene must be different".into());
+    }
+    if descriptor.engine_version.trim().is_empty() || descriptor.rendering_profile.trim().is_empty()
+    {
+        return Err("engine version and rendering profile must be non-empty".into());
+    }
+    let mut profile_names = BTreeSet::new();
+    for profile in &descriptor.build_profiles {
+        if profile.name.trim().is_empty()
+            || !matches!(profile.kind.as_str(), "development" | "release")
+        {
+            return Err("build profiles require a name and development or release kind".into());
+        }
+        validate_relative_path(&profile.output_directory, "build profile output")?;
+        if !profile_names.insert(&profile.name) {
+            return Err("build profile names must be unique".into());
+        }
+    }
+    let mut plugins = BTreeSet::new();
+    if descriptor
+        .enabled_plugins
+        .iter()
+        .any(|plugin| plugin.trim().is_empty() || !plugins.insert(plugin))
+    {
+        return Err("plugin identifiers must be non-empty and unique".into());
     }
     Ok(descriptor)
 }
@@ -319,7 +418,7 @@ pub fn create_project(
         )?;
         write_atomic(&root.join("Scenes/Main.kscene"), "kairo-scene 1\n")?;
         let descriptor = format!(
-            "kairo-project 1\nname {}\nassets \"Assets.kassets\"\nstartup-scene \"Scenes/Main.kscene\"\n",
+            "kairo-project 2\nname {}\nengine-version \"0.1.0\"\nassets \"Assets.kassets\"\nstartup-scene \"Scenes/Main.kscene\"\ninput-map \"Config/Input.kinput\"\nrendering-profile \"desktop\"\nbuild-profile \"Development\" development \"Build/Development\"\nbuild-profile \"Release\" release \"Build/Release\"\n",
             quote(display_name.trim())
         );
         let project = root.join(format!("{folder_name}.kproject"));
@@ -555,6 +654,16 @@ mod tests {
         let health = inspect_project(&project);
         assert!(health.is_valid(), "{:?}", health.errors);
         assert_eq!(health.descriptor.unwrap().name, "Test Game");
+    }
+
+    #[test]
+    fn project_v2_round_trips_runtime_and_build_metadata() {
+        let descriptor = parse_project(
+            "kairo-project 2\nname \"V2\"\nengine-version \"0.1.0\"\nassets \"Assets.kassets\"\nstartup-scene \"Scenes/Main.kscene\"\ninput-map \"Config/Input.kinput\"\nrendering-profile \"desktop\"\nplugin \"kairo.physics\"\nbuild-profile \"Shipping\" release \"Artifacts/Shipping\"\n",
+        )
+        .unwrap();
+        assert_eq!(descriptor.enabled_plugins, vec!["kairo.physics"]);
+        assert_eq!(descriptor.build_profiles[0].kind, "release");
     }
 
     #[test]
