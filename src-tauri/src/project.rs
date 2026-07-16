@@ -1,11 +1,14 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fs;
-use std::io::Write;
+use std::io::{BufReader, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Child, Command};
 
 const MAX_PROJECT_BYTES: u64 = 1024 * 1024;
+const MAX_RECOVERY_MANIFEST_BYTES: u64 = 4 * 1024 * 1024;
+const MAX_RECOVERY_PAYLOAD_BYTES: u64 = 512 * 1024 * 1024;
+const MAX_RECOVERY_FILES: usize = 512;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -35,6 +38,34 @@ pub struct ProjectHealth {
     pub descriptor: Option<ProjectDescriptor>,
     pub errors: Vec<String>,
     pub warnings: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoverySnapshotInfo {
+    pub directory: PathBuf,
+    pub created_unix_milliseconds: i64,
+    pub active_scene: PathBuf,
+    pub file_count: usize,
+    pub dirty_file_count: usize,
+    pub text_draft_count: usize,
+    pub errors: Vec<String>,
+}
+
+impl RecoverySnapshotInfo {
+    pub fn is_valid(&self) -> bool {
+        self.errors.is_empty()
+    }
+}
+
+#[derive(Debug)]
+struct RecoveryFileRecord {
+    role: String,
+    target: PathBuf,
+    payload: PathBuf,
+    byte_count: u64,
+    checksum: u64,
+    dirty: bool,
 }
 
 impl ProjectHealth {
@@ -344,6 +375,321 @@ pub fn inspect_project(path: &Path) -> ProjectHealth {
     health
 }
 
+fn recovery_checksum(path: &Path) -> Result<(u64, u64), String> {
+    let file = fs::File::open(path)
+        .map_err(|error| format!("Cannot open recovery payload {}: {error}", path.display()))?;
+    let mut reader = BufReader::new(file);
+    let mut hash = 14_695_981_039_346_656_037u64;
+    let mut bytes = 0u64;
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let count = reader
+            .read(&mut buffer)
+            .map_err(|error| format!("Cannot read recovery payload {}: {error}", path.display()))?;
+        if count == 0 {
+            break;
+        }
+        bytes = bytes
+            .checked_add(count as u64)
+            .ok_or_else(|| "Recovery payload byte count overflowed".to_string())?;
+        if bytes > MAX_RECOVERY_PAYLOAD_BYTES {
+            return Err("Recovery payload exceeds its 512 MiB safety limit".into());
+        }
+        for byte in &buffer[..count] {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(1_099_511_628_211u64);
+        }
+    }
+    Ok((bytes, hash))
+}
+
+fn inspect_recovery_snapshot(project: &Path, directory: &Path) -> RecoverySnapshotInfo {
+    let mut result = RecoverySnapshotInfo {
+        directory: directory.to_path_buf(),
+        created_unix_milliseconds: 0,
+        active_scene: PathBuf::new(),
+        file_count: 0,
+        dirty_file_count: 0,
+        text_draft_count: 0,
+        errors: Vec::new(),
+    };
+    let project_root = match project
+        .parent()
+        .and_then(|path| fs::canonicalize(path).ok())
+    {
+        Some(path) => path,
+        None => {
+            result.errors.push("Cannot resolve project root".into());
+            return result;
+        }
+    };
+    let directory = match fs::canonicalize(directory) {
+        Ok(path) => path,
+        Err(error) => {
+            result
+                .errors
+                .push(format!("Cannot resolve snapshot directory: {error}"));
+            return result;
+        }
+    };
+    result.directory = directory.clone();
+    if directory.parent() != Some(project_root.join(".kairo/recovery").as_path()) {
+        result
+            .errors
+            .push("Snapshot is outside this project's recovery directory".into());
+        return result;
+    }
+    let manifest = directory.join("manifest.krecover");
+    let metadata = match fs::metadata(&manifest) {
+        Ok(metadata) if metadata.is_file() => metadata,
+        Ok(_) => {
+            result
+                .errors
+                .push("Recovery manifest is not a regular file".into());
+            return result;
+        }
+        Err(error) => {
+            result
+                .errors
+                .push(format!("Cannot inspect recovery manifest: {error}"));
+            return result;
+        }
+    };
+    if metadata.len() > MAX_RECOVERY_MANIFEST_BYTES {
+        result
+            .errors
+            .push("Recovery manifest exceeds its 4 MiB safety limit".into());
+        return result;
+    }
+    let source = match fs::read_to_string(&manifest) {
+        Ok(source) => source,
+        Err(error) => {
+            result
+                .errors
+                .push(format!("Cannot read recovery manifest: {error}"));
+            return result;
+        }
+    };
+    let mut header = false;
+    let mut created = None;
+    let mut declared_root = None;
+    let mut project_file = None;
+    let mut active_scene = None;
+    let mut files = Vec::new();
+    for (index, line) in source.lines().enumerate() {
+        let line_number = index + 1;
+        let tokens = match tokenize(line, line_number) {
+            Ok(tokens) => tokens,
+            Err(error) => {
+                result.errors.push(error);
+                continue;
+            }
+        };
+        if tokens.is_empty() {
+            continue;
+        }
+        if !header {
+            if tokens.as_slice() != ["kairo-recovery", "1"] {
+                result.errors.push(format!(
+                    "{line_number}:1: expected supported 'kairo-recovery 1' header"
+                ));
+            }
+            header = true;
+            continue;
+        }
+        match tokens[0].as_str() {
+            "created-unix-ms" if tokens.len() == 2 && created.is_none() => {
+                created = tokens[1].parse::<i64>().ok().filter(|value| *value >= 0);
+                if created.is_none() {
+                    result
+                        .errors
+                        .push(format!("{line_number}: invalid creation timestamp"));
+                }
+            }
+            "project-root" if tokens.len() == 2 && declared_root.is_none() => {
+                declared_root = Some(PathBuf::from(&tokens[1]));
+            }
+            "project-file" if tokens.len() == 2 && project_file.is_none() => {
+                let path = PathBuf::from(&tokens[1]);
+                if let Err(error) = validate_relative_path(&path, "recovery project file") {
+                    result.errors.push(format!("{line_number}: {error}"));
+                }
+                project_file = Some(path);
+            }
+            "active-scene" if tokens.len() == 2 && active_scene.is_none() => {
+                let path = PathBuf::from(&tokens[1]);
+                if let Err(error) = validate_relative_path(&path, "recovery active scene") {
+                    result.errors.push(format!("{line_number}: {error}"));
+                }
+                active_scene = Some(path);
+            }
+            "file" if tokens.len() == 8 && files.len() < MAX_RECOVERY_FILES => {
+                let role = tokens[1].clone();
+                if !matches!(
+                    role.as_str(),
+                    "project" | "assets" | "scene" | "document" | "text-draft"
+                ) {
+                    result
+                        .errors
+                        .push(format!("{line_number}: unknown recovery file role"));
+                    continue;
+                }
+                let target = PathBuf::from(&tokens[2]);
+                let payload = PathBuf::from(&tokens[3]);
+                if let Err(error) = validate_relative_path(&target, "recovery target") {
+                    result.errors.push(format!("{line_number}: {error}"));
+                    continue;
+                }
+                if let Err(error) = validate_relative_path(&payload, "recovery payload") {
+                    result.errors.push(format!("{line_number}: {error}"));
+                    continue;
+                }
+                if payload.components().next() != Some(Component::Normal("payload".as_ref())) {
+                    result.errors.push(format!(
+                        "{line_number}: payload must remain inside payload/"
+                    ));
+                    continue;
+                }
+                let Some(byte_count) = tokens[4].parse::<u64>().ok() else {
+                    result
+                        .errors
+                        .push(format!("{line_number}: invalid payload byte count"));
+                    continue;
+                };
+                let Some(checksum) = tokens[5].parse::<u64>().ok() else {
+                    result
+                        .errors
+                        .push(format!("{line_number}: invalid payload checksum"));
+                    continue;
+                };
+                let dirty = match tokens[6].as_str() {
+                    "true" => true,
+                    "false" => false,
+                    _ => {
+                        result
+                            .errors
+                            .push(format!("{line_number}: invalid dirty flag"));
+                        continue;
+                    }
+                };
+                if !matches!(tokens[7].as_str(), "true" | "false") {
+                    result
+                        .errors
+                        .push(format!("{line_number}: invalid active flag"));
+                    continue;
+                }
+                files.push(RecoveryFileRecord {
+                    role,
+                    target,
+                    payload,
+                    byte_count,
+                    checksum,
+                    dirty,
+                });
+            }
+            "file" if files.len() >= MAX_RECOVERY_FILES => {
+                result
+                    .errors
+                    .push("Recovery snapshot exceeds its 512-file safety limit".into());
+            }
+            _ => result.errors.push(format!(
+                "{line_number}: malformed or duplicate recovery statement"
+            )),
+        }
+    }
+    if !header
+        || created.is_none()
+        || declared_root.is_none()
+        || project_file.is_none()
+        || active_scene.is_none()
+    {
+        result.errors.push("Recovery manifest is incomplete".into());
+    }
+    if declared_root.as_deref() != Some(project_root.as_path()) {
+        result
+            .errors
+            .push("Recovery manifest declares another project root".into());
+    }
+    let expected_project = project.file_name().map(PathBuf::from);
+    if project_file != expected_project {
+        result
+            .errors
+            .push("Recovery manifest declares another project descriptor".into());
+    }
+    for role in ["project", "assets", "scene"] {
+        if files.iter().filter(|file| file.role == role).count() != 1 {
+            result
+                .errors
+                .push(format!("Recovery requires exactly one {role} payload"));
+        }
+    }
+    let mut payloads = BTreeSet::new();
+    for file in &files {
+        if !payloads.insert(file.payload.clone()) {
+            result.errors.push(format!(
+                "Duplicate recovery payload: {}",
+                file.payload.display()
+            ));
+            continue;
+        }
+        match recovery_checksum(&directory.join(&file.payload)) {
+            Ok((bytes, checksum)) if bytes == file.byte_count && checksum == file.checksum => {}
+            Ok(_) => result.errors.push(format!(
+                "Recovery payload failed size/checksum validation: {}",
+                file.target.display()
+            )),
+            Err(error) => result.errors.push(error),
+        }
+    }
+    result.created_unix_milliseconds = created.unwrap_or_default();
+    result.active_scene = active_scene.unwrap_or_default();
+    result.file_count = files.len();
+    result.dirty_file_count = files.iter().filter(|file| file.dirty).count();
+    result.text_draft_count = files
+        .iter()
+        .filter(|file| file.role == "text-draft")
+        .count();
+    result
+}
+
+/// Returns newest-first snapshots. Invalid published directories remain in the
+/// result with diagnostics so Hub can report damage instead of hiding it.
+pub fn recovery_snapshots(project: &Path) -> Result<Vec<RecoverySnapshotInfo>, String> {
+    let health = inspect_project(project);
+    if health.descriptor.is_none() {
+        return Err(format!(
+            "Cannot inspect recovery for invalid project: {}",
+            health.errors.join("; ")
+        ));
+    }
+    let root = project.parent().unwrap_or_else(|| Path::new("."));
+    let recovery = root.join(".kairo/recovery");
+    if !recovery.exists() {
+        return Ok(Vec::new());
+    }
+    let mut snapshots = Vec::new();
+    for entry in fs::read_dir(&recovery)
+        .map_err(|error| format!("Cannot read recovery directory: {error}"))?
+    {
+        let entry = entry.map_err(|error| format!("Cannot read recovery entry: {error}"))?;
+        if entry
+            .file_type()
+            .map_err(|error| error.to_string())?
+            .is_dir()
+            && entry.file_name().to_string_lossy().starts_with("snapshot-")
+        {
+            snapshots.push(inspect_recovery_snapshot(project, &entry.path()));
+        }
+    }
+    snapshots.sort_by(|left, right| {
+        right
+            .created_unix_milliseconds
+            .cmp(&left.created_unix_milliseconds)
+            .then_with(|| right.directory.cmp(&left.directory))
+    });
+    Ok(snapshots)
+}
+
 /// Task: recreate only missing generated bootstrap files referenced by a valid
 /// descriptor. Existing user files are never overwritten or normalized.
 pub fn repair_project(path: &Path) -> Result<ProjectHealth, String> {
@@ -570,7 +916,7 @@ pub fn clone_project(
 
 pub fn launch_editor_with(
     project: &Path,
-    recovery_mode: bool,
+    recovery_snapshot: Option<&Path>,
     editor_override: Option<&Path>,
 ) -> Result<Child, String> {
     let health = inspect_project(project);
@@ -592,8 +938,15 @@ pub fn launch_editor_with(
     };
     let mut command = Command::new(editor);
     command.arg("--project").arg(project);
-    if recovery_mode {
-        command.arg("--no-layout-persistence");
+    if let Some(snapshot) = recovery_snapshot {
+        let selected = inspect_recovery_snapshot(project, snapshot);
+        if !selected.is_valid() {
+            return Err(format!(
+                "Recovery snapshot validation failed: {}",
+                selected.errors.join("; ")
+            ));
+        }
+        command.arg("--recovery-snapshot").arg(&selected.directory);
     }
     command
         .spawn()
@@ -635,6 +988,54 @@ impl HubState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn publish_test_snapshot(project: &Path, timestamp: i64) -> PathBuf {
+        let root = fs::canonicalize(project.parent().unwrap()).unwrap();
+        let project_name = project.file_name().unwrap().to_string_lossy().into_owned();
+        let directory = root
+            .join(".kairo/recovery")
+            .join(format!("snapshot-{timestamp}-test"));
+        let payload = directory.join("payload");
+        fs::create_dir_all(payload.join("Scenes")).unwrap();
+        let records = [
+            (
+                "project",
+                PathBuf::from(&project_name),
+                fs::read_to_string(project).unwrap(),
+            ),
+            (
+                "assets",
+                PathBuf::from("Assets.kassets"),
+                fs::read_to_string(root.join("Assets.kassets")).unwrap(),
+            ),
+            (
+                "scene",
+                PathBuf::from("Scenes/Main.kscene"),
+                fs::read_to_string(root.join("Scenes/Main.kscene")).unwrap(),
+            ),
+        ];
+        let mut manifest = format!(
+            "kairo-recovery 1\ncreated-unix-ms {timestamp}\nproject-root {}\nproject-file {}\nactive-scene \"Scenes/Main.kscene\"\n",
+            quote(&root.to_string_lossy()),
+            quote(&project_name)
+        );
+        for (role, target, source) in records {
+            let payload_path = PathBuf::from("payload").join(&target);
+            let path = directory.join(&payload_path);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).unwrap();
+            }
+            fs::write(&path, source.as_bytes()).unwrap();
+            let (bytes, checksum) = recovery_checksum(&path).unwrap();
+            manifest.push_str(&format!(
+                "file {role} {} {} {bytes} {checksum} true false\n",
+                quote(&target.to_string_lossy()),
+                quote(&payload_path.to_string_lossy())
+            ));
+        }
+        fs::write(directory.join("manifest.krecover"), manifest).unwrap();
+        directory
+    }
 
     #[test]
     fn parser_rejects_unknown_and_escaping_paths() {
@@ -738,5 +1139,33 @@ mod tests {
         let installation = inspect_engine(temporary.path()).unwrap();
         assert_eq!(installation.version, "4.2.1");
         assert!(!installation.editor_available);
+    }
+
+    #[test]
+    fn recovery_discovery_validates_payloads_and_reports_corruption() {
+        let temporary = tempfile::tempdir().unwrap();
+        let project = create_project(temporary.path(), "Recovery", "Recovery").unwrap();
+        let older = publish_test_snapshot(&project, 1000);
+        let newer = publish_test_snapshot(&project, 2000);
+        let snapshots = recovery_snapshots(&project).unwrap();
+        assert_eq!(snapshots.len(), 2);
+        assert_eq!(snapshots[0].directory, fs::canonicalize(&newer).unwrap());
+        assert!(snapshots[0].is_valid(), "{:?}", snapshots[0].errors);
+        assert_eq!(snapshots[0].file_count, 3);
+        assert_eq!(snapshots[0].dirty_file_count, 3);
+
+        fs::write(older.join("payload/Scenes/Main.kscene"), "corrupt\n").unwrap();
+        let snapshots = recovery_snapshots(&project).unwrap();
+        let damaged = snapshots
+            .iter()
+            .find(|snapshot| snapshot.directory == fs::canonicalize(&older).unwrap())
+            .unwrap();
+        assert!(!damaged.is_valid());
+        assert!(
+            damaged
+                .errors
+                .iter()
+                .any(|error| error.contains("size/checksum"))
+        );
     }
 }

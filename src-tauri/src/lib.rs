@@ -1,6 +1,6 @@
 mod project;
 
-use project::{EngineInstallation, HubState, ProjectHealth};
+use project::{EngineInstallation, HubState, ProjectHealth, RecoverySnapshotInfo};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -169,6 +169,11 @@ fn repair_project(path: PathBuf) -> Result<ProjectHealth, String> {
 }
 
 #[tauri::command]
+fn recovery_snapshots(path: PathBuf) -> Result<Vec<RecoverySnapshotInfo>, String> {
+    project::recovery_snapshots(&path)
+}
+
+#[tauri::command]
 fn clone_project(
     repository: String,
     parent: PathBuf,
@@ -192,7 +197,7 @@ fn clone_project(
 #[tauri::command]
 fn launch_editor(
     path: PathBuf,
-    recovery_mode: bool,
+    recovery_snapshot: Option<PathBuf>,
     state: State<'_, ManagedHubState>,
 ) -> Result<u32, String> {
     let editor = state
@@ -203,7 +208,8 @@ fn launch_editor(
         .as_ref()
         .and_then(|root| project::inspect_engine(root).ok())
         .map(|installation| installation.editor);
-    project::launch_editor_with(&path, recovery_mode, editor.as_deref()).map(|child| child.id())
+    project::launch_editor_with(&path, recovery_snapshot.as_deref(), editor.as_deref())
+        .map(|child| child.id())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -234,6 +240,7 @@ pub fn run() {
             select_engine,
             create_project,
             repair_project,
+            recovery_snapshots,
             clone_project,
             launch_editor
         ])

@@ -29,6 +29,16 @@ type EngineInstallation = {
   editorAvailable: boolean;
 };
 
+type RecoverySnapshotInfo = {
+  directory: string;
+  createdUnixMilliseconds: number;
+  activeScene: string;
+  fileCount: number;
+  dirtyFileCount: number;
+  textDraftCount: number;
+  errors: string[];
+};
+
 const app = document.querySelector<HTMLDivElement>("#app");
 if (!app) throw new Error("KairoHub root element is missing");
 
@@ -94,6 +104,14 @@ app.innerHTML = `
       <div class="dialog-actions"><button id="add-engine" class="button secondary" type="button">Add installation</button><button id="close-engine" class="button primary" type="button">Done</button></div>
     </div>
   </dialog>
+  <dialog id="recovery-dialog" class="wide-dialog">
+    <div class="dialog-form">
+      <div><p class="eyebrow">Project recovery</p><h2>Choose a recovery point</h2></div>
+      <p class="field-note">Kairo validates every payload before launch. Restoring creates a backup of current project files, then opens the saved scene, tabs, and text drafts.</p>
+      <div id="recovery-list" class="recovery-list" aria-live="polite"></div>
+      <div class="dialog-actions"><button id="close-recovery" class="button secondary" type="button">Cancel</button></div>
+    </div>
+  </dialog>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 `;
 
@@ -102,10 +120,13 @@ const projectFilter = document.querySelector<HTMLInputElement>("#project-filter"
 const importDialog = document.querySelector<HTMLDialogElement>("#import-dialog")!;
 const createDialog = document.querySelector<HTMLDialogElement>("#create-dialog")!;
 const cloneDialog = document.querySelector<HTMLDialogElement>("#clone-dialog")!;
+const recoveryDialog = document.querySelector<HTMLDialogElement>("#recovery-dialog")!;
+const recoveryList = document.querySelector<HTMLDivElement>("#recovery-list")!;
 const toast = document.querySelector<HTMLDivElement>("#toast")!;
 let state: HubState = { recentProjects: [], favorites: [], engineRoots: [], selectedEngine: null };
 let healthByPath = new Map<string, ProjectHealth>();
 let engines: EngineInstallation[] = [];
+let recoveryProject = "";
 
 function escapeHtml(value: string): string {
   return value.replace(/[&<>'"]/g, (character) => ({
@@ -122,6 +143,41 @@ function notify(message: string, error = false): void {
 
 function projectTitle(path: string, health: ProjectHealth): string {
   return health.descriptor?.name ?? path.split(/[\\/]/).at(-1)?.replace(/\.kproject$/, "") ?? "Unknown project";
+}
+
+function formatRecoveryTime(milliseconds: number): string {
+  if (!Number.isSafeInteger(milliseconds) || milliseconds < 0) return "Unknown time";
+  const date = new Date(milliseconds);
+  if (Number.isNaN(date.getTime())) return "Unknown time";
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium", timeStyle: "short"
+  }).format(date);
+}
+
+function renderRecoverySnapshots(snapshots: RecoverySnapshotInfo[]): void {
+  if (!snapshots.length) {
+    recoveryList.innerHTML = `<div class="compact-empty">No recovery points exist for this project yet.</div>`;
+    return;
+  }
+  recoveryList.innerHTML = snapshots.map((snapshot) => {
+    const valid = snapshot.errors.length === 0;
+    const details = valid
+      ? `${snapshot.fileCount} files · ${snapshot.dirtyFileCount} dirty · ${snapshot.textDraftCount} drafts`
+      : snapshot.errors[0];
+    return `<article class="recovery-row ${valid ? "" : "invalid"}">
+      <div class="recovery-state ${valid ? "valid" : "invalid"}">${valid ? "✓" : "!"}</div>
+      <div><strong>${escapeHtml(formatRecoveryTime(snapshot.createdUnixMilliseconds))}</strong><small>${escapeHtml(snapshot.activeScene || "Unknown scene")}</small><p>${escapeHtml(details)}</p></div>
+      <button class="button primary" type="button" data-recovery="${escapeHtml(snapshot.directory)}" ${valid ? "" : "disabled"}>Restore and open</button>
+    </article>`;
+  }).join("");
+}
+
+async function showRecovery(path: string): Promise<void> {
+  recoveryProject = path;
+  recoveryList.innerHTML = `<div class="compact-empty">Validating recovery points…</div>`;
+  recoveryDialog.showModal();
+  const snapshots = await invoke<RecoverySnapshotInfo[]>("recovery_snapshots", { path });
+  renderRecoverySnapshots(snapshots);
 }
 
 function renderProjects(): void {
@@ -187,6 +243,7 @@ document.querySelector("#create-button")!.addEventListener("click", () => create
 document.querySelector("#clone-button")!.addEventListener("click", () => cloneDialog.showModal());
 document.querySelector("#engine-button")!.addEventListener("click", () => document.querySelector<HTMLDialogElement>("#engine-dialog")!.showModal());
 document.querySelector("#close-engine")!.addEventListener("click", () => document.querySelector<HTMLDialogElement>("#engine-dialog")!.close());
+document.querySelector("#close-recovery")!.addEventListener("click", () => recoveryDialog.close());
 projectFilter.addEventListener("input", renderProjects);
 
 document.querySelector("#browse-project")!.addEventListener("click", async () => {
@@ -280,12 +337,30 @@ projectList.addEventListener("click", async (event) => {
       healthByPath.set(path, health);
       renderProjects();
       notify(health.errors.length ? health.errors.join("; ") : "Missing project files repaired");
+    } else if (target.dataset.action === "recovery") {
+      await showRecovery(path);
     } else {
-      const recoveryMode = target.dataset.action === "recovery";
-      const processId = await invoke<number>("launch_editor", { path, recoveryMode });
+      const processId = await invoke<number>("launch_editor", { path, recoverySnapshot: null });
       notify(`KairoEditor launched (process ${processId})`);
     }
   } catch (error) { notify(String(error), true); }
+});
+
+recoveryList.addEventListener("click", async (event) => {
+  const target = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-recovery]");
+  if (!target || !recoveryProject) return;
+  target.disabled = true;
+  try {
+    const processId = await invoke<number>("launch_editor", {
+      path: recoveryProject,
+      recoverySnapshot: target.dataset.recovery!
+    });
+    recoveryDialog.close();
+    notify(`Recovered KairoEditor launched (process ${processId})`);
+  } catch (error) {
+    target.disabled = false;
+    notify(String(error), true);
+  }
 });
 
 if ("__TAURI_INTERNALS__" in window) {

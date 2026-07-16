@@ -1,6 +1,6 @@
 # KairoHub
 
-KairoHub is the Tauri 2 project manager and process launcher for Kairo Game Engine. It validates projects before launch, creates canonical starter projects atomically, tracks recent and favorite projects, selects a registered engine installation, and starts that installation's KairoEditor in normal or recovery mode.
+KairoHub is the Tauri 2 project manager and process launcher for Kairo Game Engine. It validates projects before launch, creates canonical starter projects atomically, tracks recent and favorite projects, selects a registered engine installation, and starts that installation's KairoEditor in normal or explicit snapshot-recovery mode.
 
 ## Development
 
@@ -17,7 +17,14 @@ KairoEditor discovery uses the first executable found in:
 2. `$KAIRO_ENGINE_ROOT/KairoEditor/build/KairoEditorApp`
 3. `KairoEditor/build/KairoEditorApp` relative to the launch directory
 
-Recovery mode requires a healthy project and launches with persisted editor docking disabled. Missing manifest or startup-scene files can be recreated explicitly through Repair; existing files are never overwritten.
+Recovery lists project-owned `.kairo/recovery/snapshot-*` journals newest first,
+stream-validates bounded payload sizes and checksums, and reports damaged entries
+without enabling them. An explicitly selected valid snapshot launches the editor
+with `--recovery-snapshot`; the editor backs up current targets, restores the
+canonical project state, disables persisted docking, and rehydrates raw text
+drafts. Recovery is never selected automatically. Missing manifest or startup
+scene files can be recreated explicitly through Repair; existing files are never
+overwritten by Repair.
 
 ## Current Contract
 
@@ -29,4 +36,5 @@ Recovery mode requires a healthy project and launches with persisted editor dock
 - Clones shallow HTTPS GitHub/GitLab repositories without invoking a shell and imports a single discovered `.kproject`.
 - Repairs only missing bootstrap manifest/scene files after the descriptor itself parses successfully.
 
-Engine-version selection, dependency repair, Git clone, build profiles, and session recovery will extend this domain layer; they are not represented as inert UI controls.
+Build-and-run profiles and deeper dependency repair remain future domain work;
+they are not represented as inert UI controls.
