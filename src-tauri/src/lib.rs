@@ -90,6 +90,7 @@ fn launch_editor(path: PathBuf, recovery_mode: bool) -> Result<u32, String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let data_file = app.path().app_data_dir()?.join("hub-state.json");
             let state = fs::read(&data_file)

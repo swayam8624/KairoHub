@@ -73,6 +73,8 @@ dialog::backdrop { background: #050709b8; }
 .dialog-form { display: grid; gap: 17px; padding: 24px; }
 .dialog-form h2 { margin-top: 5px; font-size: 20px; }
 .dialog-form label { display: grid; gap: 7px; color: #aab4bc; font-size: 12px; }
+.path-field { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; }
+.path-field input { min-width: 0; }
 .field-note { color: #78858e; font-size: 11px; }
 .dialog-actions { justify-content: flex-end; margin-top: 5px; }
 .toast { position: fixed; right: 22px; bottom: 22px; max-width: 420px; padding: 11px 14px; border: 1px solid #2d5c49; border-radius: 5px; background: #18372b; color: #c8f8e4; font-size: 12px; opacity: 0; transform: translateY(8px); pointer-events: none; transition: 150ms ease; }

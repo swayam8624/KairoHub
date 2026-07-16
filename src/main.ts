@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import "./styles.css";
 
 type ProjectDescriptor = {
@@ -53,7 +54,7 @@ app.innerHTML = `
   <dialog id="import-dialog">
     <form method="dialog" class="dialog-form">
       <div><p class="eyebrow">Existing project</p><h2>Import a Kairo project</h2></div>
-      <label>Descriptor path<input id="import-path" required placeholder="/path/to/Game.kproject" /></label>
+      <label>Descriptor path<span class="path-field"><input id="import-path" required placeholder="/path/to/Game.kproject" /><button id="browse-project" class="button secondary" type="button">Browse</button></span></label>
       <p class="field-note">The descriptor and referenced startup files are validated before import.</p>
       <div class="dialog-actions"><button value="cancel" class="button secondary">Cancel</button><button id="confirm-import" value="default" class="button primary">Import</button></div>
     </form>
@@ -63,7 +64,7 @@ app.innerHTML = `
       <div><p class="eyebrow">Blank template</p><h2>Create a Kairo project</h2></div>
       <label>Project name<input id="display-name" required placeholder="Skybound" /></label>
       <label>Folder name<input id="folder-name" required pattern="[A-Za-z0-9_-]+" placeholder="Skybound" /></label>
-      <label>Parent directory<input id="parent-path" required placeholder="/Users/name/Projects" /></label>
+      <label>Parent directory<span class="path-field"><input id="parent-path" required placeholder="/Users/name/Projects" /><button id="browse-parent" class="button secondary" type="button">Browse</button></span></label>
       <div class="dialog-actions"><button value="cancel" class="button secondary">Cancel</button><button id="confirm-create" value="default" class="button primary">Create project</button></div>
     </form>
   </dialog>
@@ -143,6 +144,16 @@ async function loadState(): Promise<void> {
 document.querySelector("#import-button")!.addEventListener("click", () => importDialog.showModal());
 document.querySelector("#create-button")!.addEventListener("click", () => createDialog.showModal());
 projectFilter.addEventListener("input", renderProjects);
+
+document.querySelector("#browse-project")!.addEventListener("click", async () => {
+  const selected = await open({ multiple: false, directory: false, filters: [{ name: "Kairo project", extensions: ["kproject"] }] });
+  if (selected) document.querySelector<HTMLInputElement>("#import-path")!.value = selected;
+});
+
+document.querySelector("#browse-parent")!.addEventListener("click", async () => {
+  const selected = await open({ multiple: false, directory: true });
+  if (selected) document.querySelector<HTMLInputElement>("#parent-path")!.value = selected;
+});
 
 document.querySelector("#confirm-import")!.addEventListener("click", async (event) => {
   event.preventDefault();
