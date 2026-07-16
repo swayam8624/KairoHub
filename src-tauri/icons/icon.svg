@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="KairoHub">
+  <rect width="512" height="512" rx="104" fill="#171b20"/>
+  <path d="M122 104h68v130l121-130h86L252 255l154 153h-91L190 280v128h-68z" fill="#eef3f6"/>
+  <path d="M350 104h48v73h-48z" fill="#45d49b"/>
+</svg>
