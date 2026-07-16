@@ -36,7 +36,8 @@ app.innerHTML = `
       <header class="topbar">
         <div><p class="eyebrow">Project workspace</p><h1>Your projects</h1></div>
         <div class="header-actions">
-          <button id="import-button" class="button secondary" type="button">Import project</button>
+          <button id="clone-button" class="button secondary" type="button">Clone</button>
+          <button id="import-button" class="button secondary" type="button">Import</button>
           <button id="create-button" class="button primary" type="button">New project</button>
         </div>
       </header>
@@ -68,6 +69,15 @@ app.innerHTML = `
       <div class="dialog-actions"><button value="cancel" class="button secondary">Cancel</button><button id="confirm-create" value="default" class="button primary">Create project</button></div>
     </form>
   </dialog>
+  <dialog id="clone-dialog">
+    <form method="dialog" class="dialog-form">
+      <div><p class="eyebrow">Git repository</p><h2>Clone a Kairo project</h2></div>
+      <label>HTTPS repository URL<input id="clone-url" required placeholder="https://github.com/owner/game.git" /></label>
+      <label>Folder name<input id="clone-folder" required pattern="[A-Za-z0-9_.-]+" placeholder="game" /></label>
+      <label>Parent directory<span class="path-field"><input id="clone-parent" required placeholder="/Users/name/Projects" /><button id="browse-clone-parent" class="button secondary" type="button">Browse</button></span></label>
+      <div class="dialog-actions"><button value="cancel" class="button secondary">Cancel</button><button id="confirm-clone" value="default" class="button primary">Clone project</button></div>
+    </form>
+  </dialog>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 `;
 
@@ -75,6 +85,7 @@ const projectList = document.querySelector<HTMLDivElement>("#project-list")!;
 const projectFilter = document.querySelector<HTMLInputElement>("#project-filter")!;
 const importDialog = document.querySelector<HTMLDialogElement>("#import-dialog")!;
 const createDialog = document.querySelector<HTMLDialogElement>("#create-dialog")!;
+const cloneDialog = document.querySelector<HTMLDialogElement>("#clone-dialog")!;
 const toast = document.querySelector<HTMLDivElement>("#toast")!;
 let state: HubState = { recentProjects: [], favorites: [] };
 let healthByPath = new Map<string, ProjectHealth>();
@@ -120,7 +131,7 @@ function renderProjects(): void {
       <div class="project-glyph">${escapeHtml(projectTitle(path, health).slice(0, 1).toUpperCase())}</div>
       <div class="project-info"><div><strong>${escapeHtml(projectTitle(path, health))}</strong><span class="health ${valid ? "ready" : "warning"}">${valid ? "Ready" : "Repair"}</span></div><small>${escapeHtml(path)}</small><p>${escapeHtml(message)}</p></div>
       <button class="icon-button favorite ${favorite ? "selected" : ""}" type="button" data-action="favorite" aria-label="${favorite ? "Remove from favorites" : "Add to favorites"}">★</button>
-      <button class="button secondary" type="button" data-action="recovery">Recovery</button>
+      <button class="button secondary" type="button" data-action="${valid ? "recovery" : "repair"}">${valid ? "Recovery" : "Repair"}</button>
       <button class="button primary" type="button" data-action="open" ${valid ? "" : "disabled"}>Open editor</button>
     </article>`;
   }).join("");
@@ -143,6 +154,7 @@ async function loadState(): Promise<void> {
 
 document.querySelector("#import-button")!.addEventListener("click", () => importDialog.showModal());
 document.querySelector("#create-button")!.addEventListener("click", () => createDialog.showModal());
+document.querySelector("#clone-button")!.addEventListener("click", () => cloneDialog.showModal());
 projectFilter.addEventListener("input", renderProjects);
 
 document.querySelector("#browse-project")!.addEventListener("click", async () => {
@@ -153,6 +165,11 @@ document.querySelector("#browse-project")!.addEventListener("click", async () =>
 document.querySelector("#browse-parent")!.addEventListener("click", async () => {
   const selected = await open({ multiple: false, directory: true });
   if (selected) document.querySelector<HTMLInputElement>("#parent-path")!.value = selected;
+});
+
+document.querySelector("#browse-clone-parent")!.addEventListener("click", async () => {
+  const selected = await open({ multiple: false, directory: true });
+  if (selected) document.querySelector<HTMLInputElement>("#clone-parent")!.value = selected;
 });
 
 document.querySelector("#confirm-import")!.addEventListener("click", async (event) => {
@@ -182,6 +199,21 @@ document.querySelector("#confirm-create")!.addEventListener("click", async (even
   } catch (error) { notify(String(error), true); }
 });
 
+document.querySelector("#confirm-clone")!.addEventListener("click", async (event) => {
+  event.preventDefault();
+  const repository = document.querySelector<HTMLInputElement>("#clone-url")!.value.trim();
+  const folderName = document.querySelector<HTMLInputElement>("#clone-folder")!.value.trim();
+  const parent = document.querySelector<HTMLInputElement>("#clone-parent")!.value.trim();
+  if (!repository || !folderName || !parent) return;
+  try {
+    await invoke<string>("clone_project", { repository, parent, folderName });
+    state = await invoke<HubState>("hub_state");
+    cloneDialog.close();
+    await refreshHealth();
+    notify("Repository cloned and project imported");
+  } catch (error) { notify(String(error), true); }
+});
+
 projectList.addEventListener("click", async (event) => {
   const target = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-action]");
   const row = target?.closest<HTMLElement>("[data-path]");
@@ -191,6 +223,11 @@ projectList.addEventListener("click", async (event) => {
     if (target.dataset.action === "favorite") {
       state = await invoke<HubState>("set_favorite", { path, favorite: !state.favorites.includes(path) });
       renderProjects();
+    } else if (target.dataset.action === "repair") {
+      const health = await invoke<ProjectHealth>("repair_project", { path });
+      healthByPath.set(path, health);
+      renderProjects();
+      notify(health.errors.length ? health.errors.join("; ") : "Missing project files repaired");
     } else {
       const recoveryMode = target.dataset.action === "recovery";
       const processId = await invoke<number>("launch_editor", { path, recoveryMode });
@@ -199,4 +236,8 @@ projectList.addEventListener("click", async (event) => {
   } catch (error) { notify(String(error), true); }
 });
 
-loadState().catch((error) => notify(`Cannot load KairoHub state: ${String(error)}`, true));
+if ("__TAURI_INTERNALS__" in window) {
+  loadState().catch((error) => notify(`Cannot load KairoHub state: ${String(error)}`, true));
+} else {
+  renderProjects();
+}

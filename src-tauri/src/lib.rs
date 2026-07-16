@@ -83,6 +83,32 @@ fn create_project(
 }
 
 #[tauri::command]
+fn repair_project(path: PathBuf) -> Result<ProjectHealth, String> {
+    project::repair_project(&path)
+}
+
+#[tauri::command]
+fn clone_project(
+    repository: String,
+    parent: PathBuf,
+    folder_name: String,
+    state: State<'_, ManagedHubState>,
+) -> Result<PathBuf, String> {
+    let path = project::clone_project(&repository, &parent, &folder_name)?;
+    let health = project::inspect_project(&path);
+    if health.descriptor.is_none() {
+        return Err(health.errors.join("; "));
+    }
+    let mut value = state
+        .value
+        .lock()
+        .map_err(|_| "KairoHub state lock was poisoned".to_string())?;
+    value.remember(path.clone());
+    save_state(&state.data_file, &value)?;
+    Ok(path)
+}
+
+#[tauri::command]
 fn launch_editor(path: PathBuf, recovery_mode: bool) -> Result<u32, String> {
     project::launch_editor(&path, recovery_mode).map(|child| child.id())
 }
@@ -109,6 +135,8 @@ pub fn run() {
             remember_project,
             set_favorite,
             create_project,
+            repair_project,
+            clone_project,
             launch_editor
         ])
         .run(tauri::generate_context!())

@@ -245,6 +245,30 @@ pub fn inspect_project(path: &Path) -> ProjectHealth {
     health
 }
 
+/// Task: recreate only missing generated bootstrap files referenced by a valid
+/// descriptor. Existing user files are never overwritten or normalized.
+pub fn repair_project(path: &Path) -> Result<ProjectHealth, String> {
+    let source = fs::read_to_string(path)
+        .map_err(|error| format!("Cannot read project descriptor: {error}"))?;
+    let descriptor = parse_project(&source)?;
+    let root = path.parent().unwrap_or_else(|| Path::new("."));
+    let manifest = root.join(&descriptor.asset_manifest);
+    let scene = root.join(&descriptor.startup_scene);
+    if !manifest.exists() {
+        if let Some(parent) = manifest.parent() {
+            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        write_atomic(&manifest, "kairo-assets 1\n")?;
+    }
+    if !scene.exists() {
+        if let Some(parent) = scene.parent() {
+            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        write_atomic(&scene, "kairo-scene 1\n")?;
+    }
+    Ok(inspect_project(path))
+}
+
 fn quote(value: &str) -> String {
     format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }
@@ -329,9 +353,85 @@ pub fn discover_editor() -> Result<PathBuf, String> {
         })
 }
 
+fn validate_clone_folder(folder_name: &str) -> Result<(), String> {
+    if folder_name.is_empty()
+        || !folder_name.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+        })
+        || matches!(folder_name, "." | "..")
+    {
+        return Err("Clone folder must contain only letters, digits, '-', '_' or '.'".into());
+    }
+    Ok(())
+}
+
+fn find_project_descriptors(
+    root: &Path,
+    depth: usize,
+    output: &mut Vec<PathBuf>,
+) -> Result<(), String> {
+    if depth > 4 {
+        return Ok(());
+    }
+    for entry in fs::read_dir(root).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let path = entry.path();
+        if path.file_name().and_then(|name| name.to_str()) == Some(".git") {
+            continue;
+        }
+        if path.is_dir() {
+            find_project_descriptors(&path, depth + 1, output)?;
+        } else if path.extension().and_then(|extension| extension.to_str()) == Some("kproject") {
+            output.push(path);
+        }
+    }
+    Ok(())
+}
+
+pub fn clone_project(
+    repository: &str,
+    parent: &Path,
+    folder_name: &str,
+) -> Result<PathBuf, String> {
+    if !(repository.starts_with("https://github.com/")
+        || repository.starts_with("https://gitlab.com/"))
+        || !repository.ends_with(".git")
+    {
+        return Err("Repository must be an HTTPS GitHub or GitLab .git URL".into());
+    }
+    validate_clone_folder(folder_name)?;
+    let destination = parent.join(folder_name);
+    if destination.exists() {
+        return Err(format!(
+            "Clone destination already exists: {}",
+            destination.display()
+        ));
+    }
+    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    let status = Command::new("git")
+        .args(["clone", "--depth", "1", "--"])
+        .arg(repository)
+        .arg(&destination)
+        .status()
+        .map_err(|error| format!("Cannot start git clone: {error}"))?;
+    if !status.success() {
+        let _ = fs::remove_dir_all(&destination);
+        return Err(format!("git clone failed with status {status}"));
+    }
+    let mut descriptors = Vec::new();
+    find_project_descriptors(&destination, 0, &mut descriptors)?;
+    match descriptors.len() {
+        1 => Ok(descriptors.remove(0)),
+        0 => Err("Cloned repository contains no .kproject descriptor".into()),
+        count => Err(format!(
+            "Cloned repository contains {count} .kproject descriptors; import one explicitly"
+        )),
+    }
+}
+
 pub fn launch_editor(project: &Path, recovery_mode: bool) -> Result<Child, String> {
     let health = inspect_project(project);
-    if !health.is_valid() && !recovery_mode {
+    if !health.is_valid() {
         return Err(format!(
             "Project validation failed: {}",
             health.errors.join("; ")
@@ -393,6 +493,40 @@ mod tests {
         let health = inspect_project(&project);
         assert!(health.is_valid(), "{:?}", health.errors);
         assert_eq!(health.descriptor.unwrap().name, "Test Game");
+    }
+
+    #[test]
+    fn repair_recreates_only_missing_bootstrap_files() {
+        let temporary = tempfile::tempdir().unwrap();
+        let descriptor = temporary.path().join("Broken.kproject");
+        fs::write(
+            &descriptor,
+            "kairo-project 1\nname \"Broken\"\nassets \"Data/Assets.kassets\"\nstartup-scene \"World/Main.kscene\"\n",
+        )
+        .unwrap();
+        assert!(!inspect_project(&descriptor).is_valid());
+        let repaired = repair_project(&descriptor).unwrap();
+        assert!(repaired.is_valid(), "{:?}", repaired.errors);
+        fs::write(temporary.path().join("World/Main.kscene"), "user content\n").unwrap();
+        repair_project(&descriptor).unwrap();
+        assert_eq!(
+            fs::read_to_string(temporary.path().join("World/Main.kscene")).unwrap(),
+            "user content\n"
+        );
+    }
+
+    #[test]
+    fn clone_inputs_reject_option_and_untrusted_transport_injection() {
+        assert!(clone_project("--upload-pack=bad", Path::new("/tmp"), "Safe").is_err());
+        assert!(clone_project("git@github.com:owner/game.git", Path::new("/tmp"), "Safe").is_err());
+        assert!(
+            clone_project(
+                "https://github.com/owner/game.git",
+                Path::new("/tmp"),
+                "../bad"
+            )
+            .is_err()
+        );
     }
 
     #[test]

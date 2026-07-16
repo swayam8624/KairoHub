@@ -17,7 +17,7 @@ KairoEditor discovery uses the first executable found in:
 2. `$KAIRO_ENGINE_ROOT/KairoEditor/build/KairoEditorApp`
 3. `KairoEditor/build/KairoEditorApp` relative to the launch directory
 
-Recovery mode validates what it can, disables persisted editor docking state, and still opens a damaged project descriptor for repair only when KairoEditor can parse it. It does not modify project files.
+Recovery mode requires a healthy project and launches with persisted editor docking disabled. Missing manifest or startup-scene files can be recreated explicitly through Repair; existing files are never overwritten.
 
 ## Current Contract
 
@@ -26,5 +26,7 @@ Recovery mode validates what it can, disables persisted editor docking state, an
 - Writes new project files through same-directory temporary files.
 - Stores Hub recents/favorites in the operating system application-data directory, never in the project.
 - Spawns KairoEditor as a child process through the documented `--project` and `--no-layout-persistence` CLI.
+- Clones shallow HTTPS GitHub/GitLab repositories without invoking a shell and imports a single discovered `.kproject`.
+- Repairs only missing bootstrap manifest/scene files after the descriptor itself parses successfully.
 
 Engine-version selection, dependency repair, Git clone, build profiles, and session recovery will extend this domain layer; they are not represented as inert UI controls.
