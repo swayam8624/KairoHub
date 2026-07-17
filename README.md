@@ -33,7 +33,8 @@ overwritten by Repair.
 - Writes new project files through same-directory temporary files.
 - Stores Hub recents/favorites in the operating system application-data directory, never in the project.
 - Spawns KairoEditor as a child process through the documented `--project` and `--no-layout-persistence` CLI.
-- Spawns KairoPlayer directly as `<player> <project.kproject>` after checking project/engine version compatibility; no command is routed through a shell.
+- Discovers KairoEditor, KairoProjectCompiler, and KairoPlayer from one selected engine build.
+- Runs `<compiler> <project.kproject>` to publish source-bound attached logic, then spawns `<player> <project.kproject>` only when compilation succeeds; no command is routed through a shell.
 - Clones shallow HTTPS GitHub/GitLab repositories without invoking a shell and imports a single discovered `.kproject`.
 - Repairs only missing bootstrap manifest/scene files after the descriptor itself parses successfully.
 

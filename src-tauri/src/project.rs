@@ -863,6 +863,8 @@ pub struct EngineInstallation {
     pub version: String,
     pub editor: PathBuf,
     pub editor_available: bool,
+    pub project_compiler: PathBuf,
+    pub project_compiler_available: bool,
     pub player: PathBuf,
     pub player_available: bool,
 }
@@ -911,11 +913,22 @@ pub fn inspect_engine(root: &Path) -> Result<EngineInstallation, String> {
             "build/release/Runtime/KairoPlayer/KairoPlayer",
         ],
     );
+    let project_compiler = engine_executable(
+        root,
+        &[
+            "build/dev-clang/KairoEditor/KairoProjectCompiler",
+            "build/dev/KairoEditor/KairoProjectCompiler",
+            "build/release/KairoEditor/KairoProjectCompiler",
+            "KairoEditor/build/KairoProjectCompiler",
+        ],
+    );
     Ok(EngineInstallation {
         root: root.to_path_buf(),
         version,
         editor_available: editor.is_file(),
         editor,
+        project_compiler_available: project_compiler.is_file(),
+        project_compiler,
         player_available: player.is_file(),
         player,
     })
@@ -1036,8 +1049,8 @@ pub fn launch_editor_with(
         .map_err(|error| format!("Cannot launch KairoEditor: {error}"))
 }
 
-/// Launches the selected engine's standalone player after both KairoHub's
-/// structural inspection and KairoPlayer's own runtime parsing boundary.
+/// Builds attached visual logic, then launches the selected engine's player
+/// after KairoHub's structural inspection and KairoPlayer's runtime boundary.
 /// Command arguments are passed directly, never through a host shell.
 pub fn launch_player_with(
     project: &Path,
@@ -1055,6 +1068,22 @@ pub fn launch_player_with(
         return Err(format!(
             "Selected KairoPlayer build is missing: {}",
             installation.player.display()
+        ));
+    }
+    if !installation.project_compiler_available || !installation.project_compiler.is_file() {
+        return Err(format!(
+            "Selected KairoProjectCompiler build is missing: {}",
+            installation.project_compiler.display()
+        ));
+    }
+    let build = Command::new(&installation.project_compiler)
+        .arg(project)
+        .status()
+        .map_err(|error| format!("Cannot run KairoProjectCompiler: {error}"))?;
+    if !build.success() {
+        return Err(format!(
+            "Project logic build failed with status {}. Fix compiler diagnostics before running.",
+            build
         ));
     }
     Command::new(&installation.player)
@@ -1283,6 +1312,7 @@ mod tests {
         let installation = inspect_engine(temporary.path()).unwrap();
         assert_eq!(installation.version, "4.2.1");
         assert!(!installation.editor_available);
+        assert!(!installation.project_compiler_available);
         assert!(!installation.player_available);
     }
 
@@ -1300,14 +1330,20 @@ mod tests {
         let player = temporary
             .path()
             .join("build/dev-clang/Runtime/KairoPlayer/KairoPlayer");
+        let project_compiler = temporary
+            .path()
+            .join("build/dev-clang/KairoEditor/KairoProjectCompiler");
         fs::create_dir_all(editor.parent().unwrap()).unwrap();
         fs::create_dir_all(player.parent().unwrap()).unwrap();
         fs::write(&editor, b"fixture").unwrap();
+        fs::write(&project_compiler, b"fixture").unwrap();
         fs::write(&player, b"fixture").unwrap();
         let installation = inspect_engine(temporary.path()).unwrap();
         assert!(installation.editor_available);
+        assert!(installation.project_compiler_available);
         assert!(installation.player_available);
         assert_eq!(installation.editor, editor);
+        assert_eq!(installation.project_compiler, project_compiler);
         assert_eq!(installation.player, player);
     }
 
@@ -1321,12 +1357,56 @@ mod tests {
             version: "9.0.0".into(),
             editor: temporary.path().join("Editor"),
             editor_available: false,
+            project_compiler: temporary.path().join("ProjectCompiler"),
+            project_compiler_available: false,
             player: temporary.path().join("Player"),
             player_available: false,
         };
         let error = validate_project_engine_version(&health, &installation).unwrap_err();
         assert!(error.contains("requires Kairo 0.1.0"));
         assert!(error.contains("selected installation is Kairo 9.0.0"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn player_launch_requires_a_successful_project_logic_build() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temporary = tempfile::tempdir().unwrap();
+        let project = create_project(temporary.path(), "Runnable", "Runnable").unwrap();
+        let compiler = temporary.path().join("compiler.sh");
+        let player = temporary.path().join("player.sh");
+        let marker = temporary.path().join("player-started");
+        fs::write(&compiler, "#!/bin/sh\nexit 7\n").unwrap();
+        fs::write(
+            &player,
+            format!("#!/bin/sh\ntouch '{}'\n", marker.display()),
+        )
+        .unwrap();
+        fs::set_permissions(&compiler, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::set_permissions(&player, fs::Permissions::from_mode(0o755)).unwrap();
+        let installation = EngineInstallation {
+            root: temporary.path().to_path_buf(),
+            version: "0.1.0".into(),
+            editor: temporary.path().join("Editor"),
+            editor_available: false,
+            project_compiler: compiler.clone(),
+            project_compiler_available: true,
+            player: player.clone(),
+            player_available: true,
+        };
+        let failure = launch_player_with(&project, &installation).unwrap_err();
+        assert!(failure.contains("Project logic build failed"));
+        assert!(!marker.exists(), "player started after compiler failure");
+
+        fs::write(&compiler, "#!/bin/sh\nexit 0\n").unwrap();
+        fs::set_permissions(&compiler, fs::Permissions::from_mode(0o755)).unwrap();
+        let mut child = launch_player_with(&project, &installation).unwrap();
+        assert!(child.wait().unwrap().success());
+        assert!(
+            marker.exists(),
+            "player did not start after successful compilation"
+        );
     }
 
     #[test]

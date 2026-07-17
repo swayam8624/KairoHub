@@ -27,6 +27,8 @@ type EngineInstallation = {
   version: string;
   editor: string;
   editorAvailable: boolean;
+  projectCompiler: string;
+  projectCompilerAvailable: boolean;
   player: string;
   playerAvailable: boolean;
 };
@@ -217,10 +219,10 @@ function renderEngines(): void {
   const selected = engines.find((engine) => engine.root === state.selectedEngine);
   document.querySelector("#engine-name")!.textContent = selected ? `Kairo ${selected.version}` : "Engine not selected";
   document.querySelector("#engine-detail")!.textContent = selected
-    ? (selected.editorAvailable && selected.playerAvailable ? "Editor and player ready" : "Build incomplete") : "Choose an installation";
-  document.querySelector("#engine-dot")!.classList.toggle("unavailable", !selected?.editorAvailable || !selected?.playerAvailable);
+    ? (selected.editorAvailable && selected.projectCompilerAvailable && selected.playerAvailable ? "Editor, compiler and player ready" : "Build incomplete") : "Choose an installation";
+  document.querySelector("#engine-dot")!.classList.toggle("unavailable", !selected?.editorAvailable || !selected?.projectCompilerAvailable || !selected?.playerAvailable);
   const list = document.querySelector<HTMLDivElement>("#engine-list")!;
-  list.innerHTML = engines.length ? engines.map((engine) => `<button class="engine-row ${engine.root === state.selectedEngine ? "selected" : ""}" data-engine="${escapeHtml(engine.root)}" type="button"><span><strong>Kairo ${escapeHtml(engine.version)}</strong><small>${escapeHtml(engine.root)}</small></span><em>${engine.editorAvailable && engine.playerAvailable ? "Ready" : "Build incomplete"}</em></button>`).join("")
+  list.innerHTML = engines.length ? engines.map((engine) => `<button class="engine-row ${engine.root === state.selectedEngine ? "selected" : ""}" data-engine="${escapeHtml(engine.root)}" type="button"><span><strong>Kairo ${escapeHtml(engine.version)}</strong><small>${escapeHtml(engine.root)}</small></span><em>${engine.editorAvailable && engine.projectCompilerAvailable && engine.playerAvailable ? "Ready" : "Build incomplete"}</em></button>`).join("")
     : `<div class="compact-empty">No Kairo installations registered.</div>`;
 }
 
