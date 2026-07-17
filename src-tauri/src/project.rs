@@ -9,6 +9,22 @@ const MAX_PROJECT_BYTES: u64 = 1024 * 1024;
 const MAX_RECOVERY_MANIFEST_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_RECOVERY_PAYLOAD_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_RECOVERY_FILES: usize = 512;
+const STARTER_INPUT_MAP: &str = "kairo-input 1\n\
+action \"Move\" axis2d\n\
+action \"Look\" axis2d\n\
+action \"Jump\" button\n\
+action \"Quit\" button\n\
+bind \"Move\" key W 0 1 0\n\
+bind \"Move\" key S 0 -1 0\n\
+bind \"Move\" key A -1 0 0\n\
+bind \"Move\" key D 1 0 0\n\
+bind \"Move\" gamepad-axis LeftX 1 0 0.15\n\
+bind \"Move\" gamepad-axis LeftY 0 -1 0.15\n\
+bind \"Look\" gamepad-axis RightX 1 0 0.15\n\
+bind \"Look\" gamepad-axis RightY 0 -1 0.15\n\
+bind \"Jump\" key Space 1 0 0\n\
+bind \"Jump\" gamepad-button A 1 0 0\n\
+bind \"Quit\" key Escape 1 0 0\n";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -354,18 +370,19 @@ pub fn inspect_project(path: &Path) -> ProjectHealth {
         }
     };
     let root = path.parent().unwrap_or_else(|| Path::new("."));
-    if !root.join(&descriptor.asset_manifest).is_file() {
-        health.errors.push(format!(
-            "Missing asset manifest: {}",
-            descriptor.asset_manifest.display()
-        ));
-    }
-    if !root.join(&descriptor.startup_scene).is_file() {
-        health.errors.push(format!(
-            "Missing startup scene: {}",
-            descriptor.startup_scene.display()
-        ));
-    }
+    inspect_required_project_file(
+        root,
+        &descriptor.asset_manifest,
+        "asset manifest",
+        &mut health.errors,
+    );
+    inspect_required_project_file(
+        root,
+        &descriptor.startup_scene,
+        "startup scene",
+        &mut health.errors,
+    );
+    inspect_required_project_file(root, &descriptor.input_map, "input map", &mut health.errors);
     if !root.join(".git").exists() {
         health
             .warnings
@@ -373,6 +390,38 @@ pub fn inspect_project(path: &Path) -> ProjectHealth {
     }
     health.descriptor = Some(descriptor);
     health
+}
+
+/// Required project files must be regular files whose resolved location stays
+/// under the project root. This matches KairoPlayer's runtime boundary and
+/// prevents an apparently healthy project from reaching outside itself through
+/// a symlinked scene, manifest, or input map.
+fn inspect_required_project_file(
+    root: &Path,
+    relative: &Path,
+    role: &str,
+    errors: &mut Vec<String>,
+) {
+    let candidate = root.join(relative);
+    if !candidate.is_file() {
+        errors.push(format!("Missing {role}: {}", relative.display()));
+        return;
+    }
+    let Ok(canonical_root) = fs::canonicalize(root) else {
+        errors.push(format!("Cannot resolve project root while checking {role}"));
+        return;
+    };
+    match fs::canonicalize(&candidate) {
+        Ok(resolved) if resolved.starts_with(&canonical_root) => {}
+        Ok(_) => errors.push(format!(
+            "{role} resolves outside the project: {}",
+            relative.display()
+        )),
+        Err(error) => errors.push(format!(
+            "Cannot resolve {role} {}: {error}",
+            relative.display()
+        )),
+    }
 }
 
 fn recovery_checksum(path: &Path) -> Result<(u64, u64), String> {
@@ -699,6 +748,7 @@ pub fn repair_project(path: &Path) -> Result<ProjectHealth, String> {
     let root = path.parent().unwrap_or_else(|| Path::new("."));
     let manifest = root.join(&descriptor.asset_manifest);
     let scene = root.join(&descriptor.startup_scene);
+    let input_map = root.join(&descriptor.input_map);
     if !manifest.exists() {
         if let Some(parent) = manifest.parent() {
             fs::create_dir_all(parent).map_err(|error| error.to_string())?;
@@ -710,6 +760,12 @@ pub fn repair_project(path: &Path) -> Result<ProjectHealth, String> {
             fs::create_dir_all(parent).map_err(|error| error.to_string())?;
         }
         write_atomic(&scene, "kairo-scene 1\n")?;
+    }
+    if !input_map.exists() {
+        if let Some(parent) = input_map.parent() {
+            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        write_atomic(&input_map, STARTER_INPUT_MAP)?;
     }
     Ok(inspect_project(path))
 }
@@ -756,6 +812,7 @@ pub fn create_project(
         ));
     }
     fs::create_dir_all(root.join("Scenes")).map_err(|error| error.to_string())?;
+    fs::create_dir_all(root.join("Config")).map_err(|error| error.to_string())?;
     fs::create_dir_all(root.join(".kairo")).map_err(|error| error.to_string())?;
     let result = (|| {
         write_atomic(
@@ -763,6 +820,7 @@ pub fn create_project(
             "kairo-assets 1\nasset 00000000-0000-4000-8000-000000000202 material builtin 1 \"builtin/default-material\" \"kairo.builtin\"\nend\n",
         )?;
         write_atomic(&root.join("Scenes/Main.kscene"), "kairo-scene 1\n")?;
+        write_atomic(&root.join("Config/Input.kinput"), STARTER_INPUT_MAP)?;
         let descriptor = format!(
             "kairo-project 2\nname {}\nengine-version \"0.1.0\"\nassets \"Assets.kassets\"\nstartup-scene \"Scenes/Main.kscene\"\ninput-map \"Config/Input.kinput\"\nrendering-profile \"desktop\"\nbuild-profile \"Development\" development \"Build/Development\"\nbuild-profile \"Release\" release \"Build/Release\"\n",
             quote(display_name.trim())
@@ -1126,6 +1184,10 @@ mod tests {
         let health = inspect_project(&project);
         assert!(health.is_valid(), "{:?}", health.errors);
         assert_eq!(health.descriptor.unwrap().name, "Test Game");
+        let input =
+            fs::read_to_string(temporary.path().join("TestGame/Config/Input.kinput")).unwrap();
+        assert!(input.contains("action \"Move\" axis2d"));
+        assert!(input.contains("action \"Quit\" button"));
     }
 
     #[test]
@@ -1155,6 +1217,17 @@ mod tests {
         assert_eq!(
             fs::read_to_string(temporary.path().join("World/Main.kscene")).unwrap(),
             "user content\n"
+        );
+        fs::write(
+            temporary.path().join("Config/Input.kinput"),
+            "kairo-input 1\naction \"Custom\" button\nbind \"Custom\" key K 1 0 0\n",
+        )
+        .unwrap();
+        repair_project(&descriptor).unwrap();
+        assert!(
+            fs::read_to_string(temporary.path().join("Config/Input.kinput"))
+                .unwrap()
+                .contains("Custom")
         );
     }
 
