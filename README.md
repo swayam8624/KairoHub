@@ -1,6 +1,6 @@
 # KairoHub
 
-KairoHub is the Tauri 2 project manager and process launcher for Kairo Game Engine. It validates projects before launch, creates canonical starter projects atomically, tracks recent and favorite projects, selects a registered engine installation, and starts that installation's KairoEditor or KairoPlayer. Editor recovery remains an explicit separate launch mode.
+KairoHub is the Tauri 2 project manager and process launcher for Kairo Game Engine. It validates projects before launch, creates canonical starter projects atomically, tracks recent and favorite projects, selects a registered engine installation, packages descriptor-defined build profiles, and starts that installation's KairoEditor or KairoPlayer. Editor recovery remains an explicit separate launch mode.
 
 ## Development
 
@@ -35,8 +35,9 @@ overwritten by Repair.
 - Spawns KairoEditor as a child process through the documented `--project` and `--no-layout-persistence` CLI.
 - Discovers KairoEditor, KairoProjectCompiler, and KairoPlayer from one selected engine build.
 - Runs `<compiler> <project.kproject>` to publish source-bound attached logic, then spawns `<player> <project.kproject>` only when compilation succeeds; no command is routed through a shell.
+- Lists build profiles from the validated project descriptor and runs `<player> <project.kproject> --package <profile>` only after the same compiler gate succeeds. Replacement is explicit, and success is reported only after Hub verifies the published package manifest.
 - Clones shallow HTTPS GitHub/GitLab repositories without invoking a shell and imports a single discovered `.kproject`.
 - Repairs only missing bootstrap manifest/scene files after the descriptor itself parses successfully.
 
-Build-and-run profiles and deeper dependency repair remain future domain work;
-they are not represented as inert UI controls.
+Platform signing, shared-library deployment, and deeper dependency repair remain
+future release-engineering work; they are not represented as inert UI controls.

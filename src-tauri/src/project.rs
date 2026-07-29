@@ -47,6 +47,18 @@ pub struct ProjectBuildProfile {
     pub output_directory: PathBuf,
 }
 
+/// A verified package result returned to the Hub UI. Paths refer to the
+/// profile output actually published by KairoPlayer, not merely the authored
+/// destination that was requested.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackageArtifact {
+    pub profile_name: String,
+    pub profile_kind: String,
+    pub output_directory: PathBuf,
+    pub manifest_path: PathBuf,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectHealth {
@@ -1049,13 +1061,10 @@ pub fn launch_editor_with(
         .map_err(|error| format!("Cannot launch KairoEditor: {error}"))
 }
 
-/// Builds attached visual logic, then launches the selected engine's player
-/// after KairoHub's structural inspection and KairoPlayer's runtime boundary.
-/// Command arguments are passed directly, never through a host shell.
-pub fn launch_player_with(
+fn validate_player_operation(
     project: &Path,
     installation: &EngineInstallation,
-) -> Result<Child, String> {
+) -> Result<ProjectHealth, String> {
     let health = inspect_project(project);
     if !health.is_valid() {
         return Err(format!(
@@ -1076,6 +1085,10 @@ pub fn launch_player_with(
             installation.project_compiler.display()
         ));
     }
+    Ok(health)
+}
+
+fn compile_project_logic(project: &Path, installation: &EngineInstallation) -> Result<(), String> {
     let build = Command::new(&installation.project_compiler)
         .arg(project)
         .status()
@@ -1086,10 +1099,106 @@ pub fn launch_player_with(
             build
         ));
     }
+    Ok(())
+}
+
+/// Builds attached visual logic, then launches the selected engine's player
+/// after KairoHub's structural inspection and KairoPlayer's runtime boundary.
+/// Command arguments are passed directly, never through a host shell.
+pub fn launch_player_with(
+    project: &Path,
+    installation: &EngineInstallation,
+) -> Result<Child, String> {
+    let _health = validate_player_operation(project, installation)?;
+    compile_project_logic(project, installation)?;
     Command::new(&installation.player)
         .arg(project)
         .spawn()
         .map_err(|error| format!("Cannot launch KairoPlayer: {error}"))
+}
+
+fn bounded_process_diagnostics(output: &[u8]) -> String {
+    const MAX_DIAGNOSTIC_BYTES: usize = 8 * 1024;
+    let visible = &output[..output.len().min(MAX_DIAGNOSTIC_BYTES)];
+    String::from_utf8_lossy(visible).trim().to_string()
+}
+
+/// Builds project logic and asks the selected KairoPlayer to package one exact
+/// descriptor-defined profile. KairoPlayer owns staging, traversal safety, and
+/// atomic publication; Hub owns engine selection and process orchestration.
+pub fn package_project_with(
+    project: &Path,
+    profile_name: &str,
+    replace: bool,
+    installation: &EngineInstallation,
+) -> Result<PackageArtifact, String> {
+    let health = validate_player_operation(project, installation)?;
+    let descriptor = health
+        .descriptor
+        .as_ref()
+        .ok_or_else(|| "Project descriptor is unavailable after validation".to_string())?;
+    let profile = descriptor
+        .build_profiles
+        .iter()
+        .find(|profile| profile.name == profile_name)
+        .ok_or_else(|| format!("Unknown project build profile: {profile_name}"))?
+        .clone();
+
+    compile_project_logic(project, installation)?;
+    let mut command = Command::new(&installation.player);
+    command.arg(project).arg("--package").arg(&profile.name);
+    if replace {
+        command.arg("--replace");
+    }
+    let output = command
+        .output()
+        .map_err(|error| format!("Cannot run KairoPlayer package operation: {error}"))?;
+    if !output.status.success() {
+        let stderr = bounded_process_diagnostics(&output.stderr);
+        let stdout = bounded_process_diagnostics(&output.stdout);
+        let diagnostics = if !stderr.is_empty() { stderr } else { stdout };
+        return Err(if diagnostics.is_empty() {
+            format!(
+                "KairoPlayer package operation failed with status {}",
+                output.status
+            )
+        } else {
+            format!(
+                "KairoPlayer package operation failed with status {}: {diagnostics}",
+                output.status
+            )
+        });
+    }
+
+    let project_root = project
+        .parent()
+        .ok_or_else(|| "Project descriptor has no parent directory".to_string())?;
+    let requested_output = project_root.join(&profile.output_directory);
+    let output_directory = fs::canonicalize(&requested_output).map_err(|error| {
+        format!(
+            "KairoPlayer reported success but profile output {} is unavailable: {error}",
+            requested_output.display()
+        )
+    })?;
+    if !output_directory.is_dir() {
+        return Err(format!(
+            "KairoPlayer profile output is not a directory: {}",
+            output_directory.display()
+        ));
+    }
+    let manifest_path = output_directory.join("package.kmanifest");
+    if !manifest_path.is_file() {
+        return Err(format!(
+            "KairoPlayer package manifest is missing: {}",
+            manifest_path.display()
+        ));
+    }
+    Ok(PackageArtifact {
+        profile_name: profile.name,
+        profile_kind: profile.kind,
+        output_directory,
+        manifest_path,
+    })
 }
 
 /// Ensures an authored project is not opened or run with a different engine
@@ -1407,6 +1516,98 @@ mod tests {
             marker.exists(),
             "player did not start after successful compilation"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn packaging_uses_exact_profile_and_verified_player_artifact() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temporary = tempfile::tempdir().unwrap();
+        let project = create_project(temporary.path(), "Packaged", "Packaged").unwrap();
+        let compiler = temporary.path().join("compiler.sh");
+        let player = temporary.path().join("player.sh");
+        let compiler_marker = temporary.path().join("compiler-ran");
+        let arguments_marker = temporary.path().join("player-arguments");
+        fs::write(
+            &compiler,
+            format!("#!/bin/sh\ntouch '{}'\n", compiler_marker.display()),
+        )
+        .unwrap();
+        fs::write(
+            &player,
+            format!(
+                "#!/bin/sh\nproject=$1\nshift\nprintf '%s\\n' \"$@\" > '{}'\nroot=$(dirname -- \"$project\")\nmkdir -p \"$root/Build/Release\"\nprintf 'kairo-package 1\\n' > \"$root/Build/Release/package.kmanifest\"\n",
+                arguments_marker.display()
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&compiler, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::set_permissions(&player, fs::Permissions::from_mode(0o755)).unwrap();
+        let installation = EngineInstallation {
+            root: temporary.path().to_path_buf(),
+            version: "0.1.0".into(),
+            editor: temporary.path().join("Editor"),
+            editor_available: false,
+            project_compiler: compiler.clone(),
+            project_compiler_available: true,
+            player: player.clone(),
+            player_available: true,
+        };
+
+        let unknown = package_project_with(&project, "Shipping", false, &installation).unwrap_err();
+        assert!(unknown.contains("Unknown project build profile"));
+        assert!(
+            !compiler_marker.exists(),
+            "compiler ran before the requested profile was validated"
+        );
+
+        let artifact = package_project_with(&project, "Release", true, &installation).unwrap();
+        assert!(compiler_marker.is_file(), "project compiler did not run");
+        assert_eq!(artifact.profile_name, "Release");
+        assert_eq!(artifact.profile_kind, "release");
+        assert_eq!(
+            artifact.output_directory,
+            fs::canonicalize(temporary.path().join("Packaged/Build/Release")).unwrap()
+        );
+        assert!(artifact.manifest_path.is_file());
+        assert_eq!(
+            fs::read_to_string(arguments_marker).unwrap(),
+            "--package\nRelease\n--replace\n"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn packaging_surfaces_bounded_player_diagnostics() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temporary = tempfile::tempdir().unwrap();
+        let project = create_project(temporary.path(), "BrokenPackage", "Broken Package").unwrap();
+        let compiler = temporary.path().join("compiler.sh");
+        let player = temporary.path().join("player.sh");
+        fs::write(&compiler, "#!/bin/sh\nexit 0\n").unwrap();
+        fs::write(
+            &player,
+            "#!/bin/sh\necho 'specific package failure' >&2\nexit 9\n",
+        )
+        .unwrap();
+        fs::set_permissions(&compiler, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::set_permissions(&player, fs::Permissions::from_mode(0o755)).unwrap();
+        let installation = EngineInstallation {
+            root: temporary.path().to_path_buf(),
+            version: "0.1.0".into(),
+            editor: temporary.path().join("Editor"),
+            editor_available: false,
+            project_compiler: compiler,
+            project_compiler_available: true,
+            player,
+            player_available: true,
+        };
+        let error =
+            package_project_with(&project, "Development", false, &installation).unwrap_err();
+        assert!(error.contains("specific package failure"));
+        assert!(error.contains("status"));
     }
 
     #[test]

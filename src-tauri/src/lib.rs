@@ -1,6 +1,6 @@
 mod project;
 
-use project::{EngineInstallation, HubState, ProjectHealth, RecoverySnapshotInfo};
+use project::{EngineInstallation, HubState, PackageArtifact, ProjectHealth, RecoverySnapshotInfo};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -230,6 +230,30 @@ fn launch_player(path: PathBuf, state: State<'_, ManagedHubState>) -> Result<u32
     project::launch_player_with(&path, &installation).map(|child| child.id())
 }
 
+#[tauri::command]
+async fn package_project(
+    path: PathBuf,
+    profile_name: String,
+    replace: bool,
+    state: State<'_, ManagedHubState>,
+) -> Result<PackageArtifact, String> {
+    let root = state
+        .value
+        .lock()
+        .map_err(|_| "KairoHub state lock was poisoned".to_string())?
+        .selected_engine
+        .clone()
+        .ok_or_else(|| {
+            "Select a Kairo engine installation before packaging a project".to_string()
+        })?;
+    let installation = project::inspect_engine(&root)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        project::package_project_with(&path, &profile_name, replace, &installation)
+    })
+    .await
+    .map_err(|error| format!("KairoHub package task failed: {error}"))?
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -261,7 +285,8 @@ pub fn run() {
             recovery_snapshots,
             clone_project,
             launch_editor,
-            launch_player
+            launch_player,
+            package_project
         ])
         .run(tauri::generate_context!())
         .expect("KairoHub runtime failed");

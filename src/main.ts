@@ -6,6 +6,20 @@ type ProjectDescriptor = {
   name: string;
   assetManifest: string;
   startupScene: string;
+  buildProfiles: ProjectBuildProfile[];
+};
+
+type ProjectBuildProfile = {
+  name: string;
+  kind: "development" | "release";
+  outputDirectory: string;
+};
+
+type PackageArtifact = {
+  profileName: string;
+  profileKind: string;
+  outputDirectory: string;
+  manifestPath: string;
 };
 
 type ProjectHealth = {
@@ -116,6 +130,16 @@ app.innerHTML = `
       <div class="dialog-actions"><button id="close-recovery" class="button secondary" type="button">Cancel</button></div>
     </div>
   </dialog>
+  <dialog id="package-dialog">
+    <form method="dialog" class="dialog-form">
+      <div><p class="eyebrow">Runtime artifact</p><h2>Package project</h2></div>
+      <label>Build profile<select id="package-profile" required></select></label>
+      <p id="package-destination" class="field-note"></p>
+      <label class="checkbox-row"><input id="replace-package" type="checkbox" /><span>Replace an existing artifact atomically</span></label>
+      <p class="field-note">Kairo compiles attached logic first, then validates the relocated runtime project before publishing the bundle.</p>
+      <div class="dialog-actions"><button value="cancel" class="button secondary">Cancel</button><button id="confirm-package" value="default" class="button primary">Package</button></div>
+    </form>
+  </dialog>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 `;
 
@@ -126,11 +150,15 @@ const createDialog = document.querySelector<HTMLDialogElement>("#create-dialog")
 const cloneDialog = document.querySelector<HTMLDialogElement>("#clone-dialog")!;
 const recoveryDialog = document.querySelector<HTMLDialogElement>("#recovery-dialog")!;
 const recoveryList = document.querySelector<HTMLDivElement>("#recovery-list")!;
+const packageDialog = document.querySelector<HTMLDialogElement>("#package-dialog")!;
+const packageProfile = document.querySelector<HTMLSelectElement>("#package-profile")!;
+const packageDestination = document.querySelector<HTMLParagraphElement>("#package-destination")!;
 const toast = document.querySelector<HTMLDivElement>("#toast")!;
 let state: HubState = { recentProjects: [], favorites: [], engineRoots: [], selectedEngine: null };
 let healthByPath = new Map<string, ProjectHealth>();
 let engines: EngineInstallation[] = [];
 let recoveryProject = "";
+let packageProject = "";
 
 function escapeHtml(value: string): string {
   return value.replace(/[&<>'"]/g, (character) => ({
@@ -176,6 +204,26 @@ function renderRecoverySnapshots(snapshots: RecoverySnapshotInfo[]): void {
   }).join("");
 }
 
+function updatePackageDestination(): void {
+  const health = healthByPath.get(packageProject);
+  const profile = health?.descriptor?.buildProfiles.find((candidate) => candidate.name === packageProfile.value);
+  packageDestination.textContent = profile
+    ? `${profile.kind === "release" ? "Release" : "Development"} bundle · ${profile.outputDirectory}`
+    : "Select an authored build profile.";
+}
+
+function showPackage(path: string): void {
+  const descriptor = healthByPath.get(path)?.descriptor;
+  if (!descriptor?.buildProfiles.length) throw new Error("Project has no build profiles");
+  packageProject = path;
+  packageProfile.innerHTML = descriptor.buildProfiles.map((profile) =>
+    `<option value="${escapeHtml(profile.name)}">${escapeHtml(profile.name)} · ${escapeHtml(profile.kind)}</option>`
+  ).join("");
+  document.querySelector<HTMLInputElement>("#replace-package")!.checked = false;
+  updatePackageDestination();
+  packageDialog.showModal();
+}
+
 async function showRecovery(path: string): Promise<void> {
   recoveryProject = path;
   recoveryList.innerHTML = `<div class="compact-empty">Validating recovery points…</div>`;
@@ -209,6 +257,7 @@ function renderProjects(): void {
       <div class="project-info"><div><strong>${escapeHtml(projectTitle(path, health))}</strong><span class="health ${valid ? "ready" : "warning"}">${valid ? "Ready" : "Repair"}</span></div><small>${escapeHtml(path)}</small><p>${escapeHtml(message)}</p></div>
       <button class="icon-button favorite ${favorite ? "selected" : ""}" type="button" data-action="favorite" aria-label="${favorite ? "Remove from favorites" : "Add to favorites"}">★</button>
       <button class="button secondary" type="button" data-action="${valid ? "recovery" : "repair"}">${valid ? "Recovery" : "Repair"}</button>
+      <button class="button secondary" type="button" data-action="package" ${valid ? "" : "disabled"}>Package</button>
       <button class="button secondary" type="button" data-action="run" ${valid ? "" : "disabled"}>Run</button>
       <button class="button primary" type="button" data-action="open" ${valid ? "" : "disabled"}>Open editor</button>
     </article>`;
@@ -250,6 +299,7 @@ document.querySelector("#engine-button")!.addEventListener("click", () => docume
 document.querySelector("#close-engine")!.addEventListener("click", () => document.querySelector<HTMLDialogElement>("#engine-dialog")!.close());
 document.querySelector("#close-recovery")!.addEventListener("click", () => recoveryDialog.close());
 projectFilter.addEventListener("input", renderProjects);
+packageProfile.addEventListener("change", updatePackageDestination);
 
 document.querySelector("#browse-project")!.addEventListener("click", async () => {
   const selected = await open({ multiple: false, directory: false, filters: [{ name: "Kairo project", extensions: ["kproject"] }] });
@@ -328,6 +378,28 @@ document.querySelector("#confirm-clone")!.addEventListener("click", async (event
   } catch (error) { notify(String(error), true); }
 });
 
+document.querySelector("#confirm-package")!.addEventListener("click", async (event) => {
+  event.preventDefault();
+  if (!packageProject || !packageProfile.value) return;
+  const button = event.currentTarget as HTMLButtonElement;
+  button.disabled = true;
+  button.textContent = "Packaging…";
+  try {
+    const artifact = await invoke<PackageArtifact>("package_project", {
+      path: packageProject,
+      profileName: packageProfile.value,
+      replace: document.querySelector<HTMLInputElement>("#replace-package")!.checked
+    });
+    packageDialog.close();
+    notify(`${artifact.profileName} package ready at ${artifact.outputDirectory}`);
+  } catch (error) {
+    notify(String(error), true);
+  } finally {
+    button.disabled = false;
+    button.textContent = "Package";
+  }
+});
+
 projectList.addEventListener("click", async (event) => {
   const target = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-action]");
   const row = target?.closest<HTMLElement>("[data-path]");
@@ -344,6 +416,8 @@ projectList.addEventListener("click", async (event) => {
       notify(health.errors.length ? health.errors.join("; ") : "Missing project files repaired");
     } else if (target.dataset.action === "recovery") {
       await showRecovery(path);
+    } else if (target.dataset.action === "package") {
+      showPackage(path);
     } else if (target.dataset.action === "run") {
       const processId = await invoke<number>("launch_player", { path });
       notify(`KairoPlayer launched (process ${processId})`);
