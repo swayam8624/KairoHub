@@ -35,6 +35,7 @@ pub struct ProjectDescriptor {
     pub engine_version: String,
     pub input_map: PathBuf,
     pub rendering_profile: String,
+    pub graphics_backend: String,
     pub enabled_plugins: Vec<String>,
     pub build_profiles: Vec<ProjectBuildProfile>,
 }
@@ -199,6 +200,7 @@ pub fn parse_project(source: &str) -> Result<ProjectDescriptor, String> {
     let mut engine_version = None;
     let mut input_map = None;
     let mut rendering_profile = None;
+    let mut graphics_backend = None;
     let mut enabled_plugins = Vec::new();
     let mut build_profiles = Vec::new();
     for (index, line) in source.lines().enumerate() {
@@ -240,6 +242,11 @@ pub fn parse_project(source: &str) -> Result<ProjectDescriptor, String> {
             {
                 rendering_profile = Some(tokens[1].clone())
             }
+            "graphics-backend"
+                if tokens.len() == 2 && version == Some(2) && graphics_backend.is_none() =>
+            {
+                graphics_backend = Some(tokens[1].clone())
+            }
             "plugin" if tokens.len() == 2 && version == Some(2) => {
                 enabled_plugins.push(tokens[1].clone())
             }
@@ -256,7 +263,7 @@ pub fn parse_project(source: &str) -> Result<ProjectDescriptor, String> {
                     tokens[0]
                 ));
             }
-            "engine-version" | "input-map" | "rendering-profile" | "plugin" | "build-profile" => {
+            "engine-version" | "input-map" | "rendering-profile" | "graphics-backend" | "plugin" | "build-profile" => {
                 return Err(format!(
                     "{line_number}:1: malformed or version-incompatible '{}' statement",
                     tokens[0]
@@ -283,6 +290,7 @@ pub fn parse_project(source: &str) -> Result<ProjectDescriptor, String> {
         engine_version: engine_version.unwrap_or_else(|| "0.1.0".into()),
         input_map: input_map.unwrap_or_else(|| PathBuf::from("Config/Input.kinput")),
         rendering_profile: rendering_profile.unwrap_or_else(|| "desktop".into()),
+        graphics_backend: graphics_backend.unwrap_or_else(|| "auto".into()),
         enabled_plugins,
         build_profiles: if build_profiles.is_empty() {
             vec![
@@ -313,6 +321,11 @@ pub fn parse_project(source: &str) -> Result<ProjectDescriptor, String> {
     if descriptor.engine_version.trim().is_empty() || descriptor.rendering_profile.trim().is_empty()
     {
         return Err("engine version and rendering profile must be non-empty".into());
+    }
+    if !matches!(descriptor.graphics_backend.as_str(),
+        "auto" | "vulkan" | "metal" | "d3d12" | "opengl")
+    {
+        return Err("graphics backend must be auto, vulkan, metal, d3d12, or opengl".into());
     }
     let mut profile_names = BTreeSet::new();
     for profile in &descriptor.build_profiles {
@@ -834,7 +847,7 @@ pub fn create_project(
         write_atomic(&root.join("Scenes/Main.kscene"), "kairo-scene 1\n")?;
         write_atomic(&root.join("Config/Input.kinput"), STARTER_INPUT_MAP)?;
         let descriptor = format!(
-            "kairo-project 2\nname {}\nengine-version \"0.1.0\"\nassets \"Assets.kassets\"\nstartup-scene \"Scenes/Main.kscene\"\ninput-map \"Config/Input.kinput\"\nrendering-profile \"desktop\"\nbuild-profile \"Development\" development \"Build/Development\"\nbuild-profile \"Release\" release \"Build/Release\"\n",
+            "kairo-project 2\nname {}\nengine-version \"0.1.0\"\nassets \"Assets.kassets\"\nstartup-scene \"Scenes/Main.kscene\"\ninput-map \"Config/Input.kinput\"\nrendering-profile \"desktop\"\ngraphics-backend \"auto\"\nbuild-profile \"Development\" development \"Build/Development\"\nbuild-profile \"Release\" release \"Build/Release\"\n",
             quote(display_name.trim())
         );
         let project = root.join(format!("{folder_name}.kproject"));
@@ -1336,6 +1349,16 @@ mod tests {
         .unwrap();
         assert_eq!(descriptor.enabled_plugins, vec!["kairo.physics"]);
         assert_eq!(descriptor.build_profiles[0].kind, "release");
+        assert_eq!(descriptor.graphics_backend, "auto");
+
+        let explicit = parse_project(
+            "kairo-project 2\nname \"GL\"\nengine-version \"0.1.0\"\nassets \"Assets.kassets\"\nstartup-scene \"Scenes/Main.kscene\"\ninput-map \"Config/Input.kinput\"\nrendering-profile \"desktop\"\ngraphics-backend \"opengl\"\nbuild-profile \"Shipping\" release \"Artifacts/Shipping\"\n",
+        )
+        .unwrap();
+        assert_eq!(explicit.graphics_backend, "opengl");
+        assert!(parse_project(
+            "kairo-project 2\nname \"Bad\"\nengine-version \"0.1.0\"\nassets \"Assets.kassets\"\nstartup-scene \"Scenes/Main.kscene\"\ninput-map \"Config/Input.kinput\"\nrendering-profile \"desktop\"\ngraphics-backend \"software\"\nbuild-profile \"Shipping\" release \"Artifacts/Shipping\"\n"
+        ).is_err());
     }
 
     #[test]

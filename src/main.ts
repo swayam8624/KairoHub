@@ -6,6 +6,11 @@ type ProjectDescriptor = {
   name: string;
   assetManifest: string;
   startupScene: string;
+  engineVersion: string;
+  inputMap: string;
+  renderingProfile: string;
+  graphicsBackend: string;
+  enabledPlugins: string[];
   buildProfiles: ProjectBuildProfile[];
 };
 
