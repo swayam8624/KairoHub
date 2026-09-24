@@ -78,8 +78,9 @@ app.innerHTML = `
       <header class="topbar">
         <div><p class="eyebrow">Project workspace</p><h1>Your projects</h1></div>
         <div class="header-actions">
-          <button id="clone-button" class="button secondary" type="button">Clone</button>
-          <button id="import-button" class="button secondary" type="button">Import</button>
+          <button id="clone-button" class="button secondary" type="button">Clone Kairo</button>
+          <button id="external-import-button" class="button secondary" type="button">Import glTF repo</button>
+          <button id="import-button" class="button secondary" type="button">Import Kairo</button>
           <button id="create-button" class="button primary" type="button">New project</button>
         </div>
       </header>
@@ -120,6 +121,17 @@ app.innerHTML = `
       <div class="dialog-actions"><button value="cancel" class="button secondary">Cancel</button><button id="confirm-clone" value="default" class="button primary">Clone project</button></div>
     </form>
   </dialog>
+  <dialog id="external-import-dialog">
+    <form method="dialog" class="dialog-form">
+      <div><p class="eyebrow">External repository</p><h2>Import a glTF / GLB project</h2></div>
+      <label>HTTPS repository URL<input id="external-import-url" required placeholder="https://github.com/owner/demo.git" /></label>
+      <label>Folder name<input id="external-import-folder" required pattern="[A-Za-z0-9_.-]+" placeholder="demo" /></label>
+      <label>Entry scene <input id="external-import-scene" placeholder="Optional: path/to/world.glb" /></label>
+      <p class="field-note">If the repository contains exactly one .gltf/.glb file, Kairo detects it automatically. Multiple scenes require an explicit relative path. This imports portable scene content; Unity/Godot/Unreal gameplay code is not converted.</p>
+      <label>Parent directory<span class="path-field"><input id="external-import-parent" required placeholder="/Users/name/Projects" /><button id="browse-external-parent" class="button secondary" type="button">Browse</button></span></label>
+      <div class="dialog-actions"><button value="cancel" class="button secondary">Cancel</button><button id="confirm-external-import" value="default" class="button primary">Clone and convert</button></div>
+    </form>
+  </dialog>
   <dialog id="engine-dialog">
     <div class="dialog-form">
       <div><p class="eyebrow">Toolchain</p><h2>Kairo installations</h2></div>
@@ -153,6 +165,7 @@ const projectFilter = document.querySelector<HTMLInputElement>("#project-filter"
 const importDialog = document.querySelector<HTMLDialogElement>("#import-dialog")!;
 const createDialog = document.querySelector<HTMLDialogElement>("#create-dialog")!;
 const cloneDialog = document.querySelector<HTMLDialogElement>("#clone-dialog")!;
+const externalImportDialog = document.querySelector<HTMLDialogElement>("#external-import-dialog")!;
 const recoveryDialog = document.querySelector<HTMLDialogElement>("#recovery-dialog")!;
 const recoveryList = document.querySelector<HTMLDivElement>("#recovery-list")!;
 const packageDialog = document.querySelector<HTMLDialogElement>("#package-dialog")!;
@@ -300,6 +313,7 @@ async function loadState(): Promise<void> {
 document.querySelector("#import-button")!.addEventListener("click", () => importDialog.showModal());
 document.querySelector("#create-button")!.addEventListener("click", () => createDialog.showModal());
 document.querySelector("#clone-button")!.addEventListener("click", () => cloneDialog.showModal());
+document.querySelector("#external-import-button")!.addEventListener("click", () => externalImportDialog.showModal());
 document.querySelector("#engine-button")!.addEventListener("click", () => document.querySelector<HTMLDialogElement>("#engine-dialog")!.showModal());
 document.querySelector("#close-engine")!.addEventListener("click", () => document.querySelector<HTMLDialogElement>("#engine-dialog")!.close());
 document.querySelector("#close-recovery")!.addEventListener("click", () => recoveryDialog.close());
@@ -319,6 +333,11 @@ document.querySelector("#browse-parent")!.addEventListener("click", async () => 
 document.querySelector("#browse-clone-parent")!.addEventListener("click", async () => {
   const selected = await open({ multiple: false, directory: true });
   if (selected) document.querySelector<HTMLInputElement>("#clone-parent")!.value = selected;
+});
+
+document.querySelector("#browse-external-parent")!.addEventListener("click", async () => {
+  const selected = await open({ multiple: false, directory: true });
+  if (selected) document.querySelector<HTMLInputElement>("#external-import-parent")!.value = selected;
 });
 
 document.querySelector("#add-engine")!.addEventListener("click", async () => {
@@ -380,6 +399,27 @@ document.querySelector("#confirm-clone")!.addEventListener("click", async (event
     cloneDialog.close();
     await refreshHealth();
     notify("Repository cloned and project imported");
+  } catch (error) { notify(String(error), true); }
+});
+
+document.querySelector("#confirm-external-import")!.addEventListener("click", async (event) => {
+  event.preventDefault();
+  const repository = document.querySelector<HTMLInputElement>("#external-import-url")!.value.trim();
+  const folderName = document.querySelector<HTMLInputElement>("#external-import-folder")!.value.trim();
+  const parent = document.querySelector<HTMLInputElement>("#external-import-parent")!.value.trim();
+  const entrySceneValue = document.querySelector<HTMLInputElement>("#external-import-scene")!.value.trim();
+  if (!repository || !folderName || !parent) return;
+  try {
+    const project = await invoke<string>("import_external_gltf_project", {
+      repository,
+      parent,
+      folderName,
+      entryScene: entrySceneValue || null
+    });
+    state = await invoke<HubState>("hub_state");
+    externalImportDialog.close();
+    await refreshHealth();
+    notify(`External scene converted to Kairo project: ${project}`);
   } catch (error) { notify(String(error), true); }
 });
 
