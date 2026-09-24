@@ -192,6 +192,41 @@ fn clone_project(
 }
 
 #[tauri::command]
+fn import_external_gltf_project(
+    repository: String,
+    parent: PathBuf,
+    folder_name: String,
+    entry_scene: Option<String>,
+    state: State<'_, ManagedHubState>,
+) -> Result<PathBuf, String> {
+    let engine_version = {
+        let value = state
+            .value
+            .lock()
+            .map_err(|_| "KairoHub state lock was poisoned".to_string())?;
+        let root = value
+            .selected_engine
+            .as_ref()
+            .ok_or_else(|| "Select a Kairo engine installation before importing external content".to_string())?;
+        project::inspect_engine(root)?.version
+    };
+    let path = project::clone_external_gltf_project(
+        &repository,
+        &parent,
+        &folder_name,
+        entry_scene.as_deref(),
+        &engine_version,
+    )?;
+    let mut value = state
+        .value
+        .lock()
+        .map_err(|_| "KairoHub state lock was poisoned".to_string())?;
+    value.remember(path.clone());
+    save_state(&state.data_file, &value)?;
+    Ok(path)
+}
+
+#[tauri::command]
 fn launch_editor(
     path: PathBuf,
     recovery_snapshot: Option<PathBuf>,
@@ -281,6 +316,7 @@ pub fn run() {
             repair_project,
             recovery_snapshots,
             clone_project,
+            import_external_gltf_project,
             launch_editor,
             launch_player,
             package_project
