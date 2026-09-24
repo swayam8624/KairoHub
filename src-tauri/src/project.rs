@@ -1603,6 +1603,7 @@ mod tests {
 
         let temporary = tempfile::tempdir().unwrap();
         let project = create_project(temporary.path(), "Runnable", "Runnable").unwrap();
+        import_project(&project).expect("fresh Kairo project must import before launch");
         let compiler = temporary.path().join("compiler.sh");
         let player = temporary.path().join("player.sh");
         let marker = temporary.path().join("player-started");
