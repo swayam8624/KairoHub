@@ -83,6 +83,7 @@ app.innerHTML = `
           <button id="external-import-button" class="button secondary" type="button">Import glTF repo</button>
           <button id="local-external-import-button" class="button secondary" type="button">Import Directory</button>
           <button id="import-button" class="button secondary" type="button">Import Kairo</button>
+          <button id="import-folder-button" class="button secondary" type="button">Import Kairo Folder</button>
           <button id="create-button" class="button primary" type="button">New project</button>
         </div>
       </header>
@@ -324,6 +325,18 @@ async function loadState(): Promise<void> {
 }
 
 document.querySelector("#import-button")!.addEventListener("click", () => importDialog.showModal());
+document.querySelector("#import-folder-button")!.addEventListener("click", async () => {
+  const root = await open({ multiple: false, directory: true, title: "Select Kairo project folder" });
+  if (!root) return;
+  try {
+    const project = await invoke<string>("import_project_directory", { root });
+    state = await invoke<HubState>("hub_state");
+    await refreshHealth();
+    notify(`Kairo project imported: ${project}`);
+  } catch (error) {
+    notify(String(error), true);
+  }
+});
 document.querySelector("#create-button")!.addEventListener("click", () => createDialog.showModal());
 document.querySelector("#clone-button")!.addEventListener("click", () => cloneDialog.showModal());
 document.querySelector("#external-import-button")!.addEventListener("click", () => externalImportDialog.showModal());
