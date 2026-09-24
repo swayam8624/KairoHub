@@ -433,6 +433,15 @@ pub fn inspect_project(path: &Path) -> ProjectHealth {
         &mut health.errors,
     );
     inspect_required_project_file(root, &descriptor.input_map, "input map", &mut health.errors);
+    if let Some(play_executable) = &descriptor.play_executable {
+        let candidate = root.join(play_executable);
+        if !candidate.is_file() {
+            health.warnings.push(format!(
+                "Play executable is not built yet: {}",
+                play_executable.display()
+            ));
+        }
+    }
     if !root.join(".git").exists() {
         health
             .warnings
@@ -2058,6 +2067,62 @@ mod tests {
             marker.exists(),
             "player did not start after successful compilation"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn player_launch_prefers_project_play_executable() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temporary = tempfile::tempdir().unwrap();
+        let project = create_project(temporary.path(), "Playable", "Playable").unwrap();
+        let source = fs::read_to_string(&project).unwrap();
+        let source = source.replace(
+            "graphics-backend \"auto\"\n",
+            "graphics-backend \"auto\"\nplay-executable \"Build/Development/PlayableGame\"\n",
+        );
+        fs::write(&project, source).unwrap();
+
+        let runtime = temporary
+            .path()
+            .join("Playable/Build/Development/PlayableGame");
+        fs::create_dir_all(runtime.parent().unwrap()).unwrap();
+        let runtime_marker = temporary.path().join("custom-runtime-started");
+        fs::write(
+            &runtime,
+            format!("#!/bin/sh\ntouch '{}'\n", runtime_marker.display()),
+        )
+        .unwrap();
+        fs::set_permissions(&runtime, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let compiler = temporary.path().join("compiler.sh");
+        fs::write(&compiler, "#!/bin/sh\nexit 0\n").unwrap();
+        fs::set_permissions(&compiler, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let generic_player = temporary.path().join("generic-player.sh");
+        let generic_marker = temporary.path().join("generic-player-started");
+        fs::write(
+            &generic_player,
+            format!("#!/bin/sh\ntouch '{}'\n", generic_marker.display()),
+        )
+        .unwrap();
+        fs::set_permissions(&generic_player, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let installation = EngineInstallation {
+            root: temporary.path().to_path_buf(),
+            version: "0.1.0".into(),
+            editor: temporary.path().join("Editor"),
+            editor_available: false,
+            project_compiler: compiler,
+            project_compiler_available: true,
+            player: generic_player,
+            player_available: true,
+        };
+
+        let mut child = launch_player_with(&project, &installation).unwrap();
+        assert!(child.wait().unwrap().success());
+        assert!(runtime_marker.exists(), "custom project runtime did not launch");
+        assert!(!generic_marker.exists(), "generic KairoPlayer launched instead");
     }
 
     #[cfg(unix)]
