@@ -287,8 +287,7 @@ async fn launch_player(path: PathBuf, state: State<'_, ManagedHubState>) -> Resu
             .map_err(|error| format!("Cannot inspect launched runtime process: {error}"))?
         {
             Some(status) if !status.success() => Err(format!(
-                "Kairo runtime exited immediately with status {status}. "
-                "Open the project in KairoEditor for the project-local runtime log."
+                "Kairo runtime exited immediately with status {status}. Open the project in KairoEditor for the project-local runtime log."
             )),
             Some(status) => Err(format!(
                 "Kairo runtime exited before creating an interactive session with status {status}."
