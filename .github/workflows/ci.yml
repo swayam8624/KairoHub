@@ -31,10 +31,13 @@ jobs:
           components: rustfmt
 
       - name: Install frontend dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: TypeScript and Vite build
         run: npm run build
+
+      - name: Frontend security audit
+        run: npm audit --audit-level=high
 
       - name: Rust formatting
         run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
