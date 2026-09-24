@@ -263,7 +263,8 @@ pub fn parse_project(source: &str) -> Result<ProjectDescriptor, String> {
                     tokens[0]
                 ));
             }
-            "engine-version" | "input-map" | "rendering-profile" | "graphics-backend" | "plugin" | "build-profile" => {
+            "engine-version" | "input-map" | "rendering-profile" | "graphics-backend"
+            | "plugin" | "build-profile" => {
                 return Err(format!(
                     "{line_number}:1: malformed or version-incompatible '{}' statement",
                     tokens[0]
@@ -322,9 +323,10 @@ pub fn parse_project(source: &str) -> Result<ProjectDescriptor, String> {
     {
         return Err("engine version and rendering profile must be non-empty".into());
     }
-    if !matches!(descriptor.graphics_backend.as_str(),
-        "auto" | "vulkan" | "metal" | "d3d12" | "opengl")
-    {
+    if !matches!(
+        descriptor.graphics_backend.as_str(),
+        "auto" | "vulkan" | "metal" | "d3d12" | "opengl"
+    ) {
         return Err("graphics backend must be auto, vulkan, metal, d3d12, or opengl".into());
     }
     let mut profile_names = BTreeSet::new();
@@ -379,7 +381,9 @@ pub fn inspect_project(path: &Path) -> ProjectHealth {
         return health;
     }
     if !metadata.is_file() {
-        health.errors.push("Project descriptor must be a regular file".into());
+        health
+            .errors
+            .push("Project descriptor must be a regular file".into());
         return health;
     }
     if metadata.len() > MAX_PROJECT_BYTES {
@@ -1033,7 +1037,9 @@ fn find_project_descriptors(
 fn validate_clone_repository(repository: &str) -> Result<(), String> {
     if repository.is_empty()
         || repository.len() > 2048
-        || repository.chars().any(|ch| ch.is_control() || ch.is_whitespace())
+        || repository
+            .chars()
+            .any(|ch| ch.is_control() || ch.is_whitespace())
         || repository.contains('?')
         || repository.contains('#')
     {
@@ -1056,8 +1062,9 @@ fn validate_clone_repository(repository: &str) -> Result<(), String> {
                 || *part == "."
                 || *part == ".."
                 || part.starts_with('-')
-                || !part.chars().all(|ch| ch.is_ascii_alphanumeric()
-                    || matches!(ch, '-' | '_' | '.'))
+                || !part
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
         })
     {
         return Err("Repository URL has an invalid owner/project path".into());
@@ -1111,7 +1118,10 @@ fn find_external_scene_candidates(
     for entry in fs::read_dir(current).map_err(|error| error.to_string())? {
         let entry = entry.map_err(|error| error.to_string())?;
         let path = entry.path();
-        let name = path.file_name().and_then(|value| value.to_str()).unwrap_or("");
+        let name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("");
         if matches!(name, ".git" | ".kairo" | "Build" | "build" | "node_modules") {
             continue;
         }
@@ -1183,8 +1193,12 @@ fn resolve_external_scene(root: &Path, requested: Option<&str>) -> Result<PathBu
     };
 
     let candidate = root.join(&relative);
-    let metadata = fs::symlink_metadata(&candidate)
-        .map_err(|error| format!("Cannot inspect external scene {}: {error}", relative.display()))?;
+    let metadata = fs::symlink_metadata(&candidate).map_err(|error| {
+        format!(
+            "Cannot inspect external scene {}: {error}",
+            relative.display()
+        )
+    })?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {
         return Err("External scene must be a regular non-symlink file".into());
     }
@@ -1282,7 +1296,10 @@ end\n"
 
     let health = import_project(&project)?;
     if !health.is_valid() {
-        return Err(format!("Generated external Kairo project is invalid: {}", health.errors.join("; ")));
+        return Err(format!(
+            "Generated external Kairo project is invalid: {}",
+            health.errors.join("; ")
+        ));
     }
     Ok(project)
 }
@@ -1297,7 +1314,10 @@ pub fn import_external_gltf_directory(
     engine_version: &str,
 ) -> Result<PathBuf, String> {
     if !root.is_dir() {
-        return Err(format!("External import root is not a directory: {}", root.display()));
+        return Err(format!(
+            "External import root is not a directory: {}",
+            root.display()
+        ));
     }
     let metadata = fs::symlink_metadata(root)
         .map_err(|error| format!("Cannot inspect external import root: {error}"))?;
@@ -1341,12 +1361,8 @@ pub fn clone_external_gltf_project(
         return Err(format!("git clone failed with status {status}"));
     }
 
-    let result = import_external_gltf_directory(
-        &destination,
-        entry_scene,
-        folder_name,
-        engine_version,
-    );
+    let result =
+        import_external_gltf_directory(&destination, entry_scene, folder_name, engine_version);
     if result.is_err() {
         let _ = fs::remove_dir_all(&destination);
     }
