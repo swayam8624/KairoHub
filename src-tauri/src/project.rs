@@ -1277,6 +1277,22 @@ end\n"
     Ok(project)
 }
 
+/// Converts one existing local content repository into a Kairo project without
+/// copying or rewriting the authored glTF/GLB payload. Generated Kairo bootstrap
+/// files live at the repository root/.kairo boundary.
+pub fn import_external_gltf_directory(
+    root: &Path,
+    entry_scene: Option<&str>,
+    display_name: &str,
+    engine_version: &str,
+) -> Result<PathBuf, String> {
+    if !root.is_dir() {
+        return Err(format!("External import root is not a directory: {}", root.display()));
+    }
+    let scene = resolve_external_scene(root, entry_scene)?;
+    generate_external_gltf_project(root, &scene, display_name, engine_version)
+}
+
 /// Clones a non-Kairo repository and converts one glTF/GLB scene into a real
 /// runnable Kairo project. This is intentionally not an arbitrary Unity/Godot/
 /// Unreal converter: gameplay code and proprietary engine metadata are not
@@ -1310,15 +1326,12 @@ pub fn clone_external_gltf_project(
         return Err(format!("git clone failed with status {status}"));
     }
 
-    let result = (|| {
-        let scene = resolve_external_scene(&destination, entry_scene)?;
-        generate_external_gltf_project(
-            &destination,
-            &scene,
-            folder_name,
-            engine_version,
-        )
-    })();
+    let result = import_external_gltf_directory(
+        &destination,
+        entry_scene,
+        folder_name,
+        engine_version,
+    );
     if result.is_err() {
         let _ = fs::remove_dir_all(&destination);
     }
