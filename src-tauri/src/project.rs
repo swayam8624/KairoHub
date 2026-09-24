@@ -465,6 +465,34 @@ pub fn import_project(path: &Path) -> Result<ProjectHealth, String> {
     Ok(health)
 }
 
+/// Imports a local directory by discovering exactly one validated Kairo project.
+/// Generated caches/build outputs are ignored by descriptor discovery.
+pub fn import_project_directory(root: &Path) -> Result<PathBuf, String> {
+    let metadata = fs::symlink_metadata(root)
+        .map_err(|error| format!("Cannot inspect project directory: {error}"))?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err("Project import directory must be a real directory, not a symlink".into());
+    }
+    let root = fs::canonicalize(root)
+        .map_err(|error| format!("Cannot resolve project directory: {error}"))?;
+    let mut projects = Vec::new();
+    find_project_descriptors(&root, 0, &mut projects)?;
+    projects.sort();
+    projects.dedup();
+
+    match projects.as_slice() {
+        [] => Err("Selected directory contains no Kairo .kproject descriptor".into()),
+        [project] => {
+            import_project(project)?;
+            Ok(project.clone())
+        }
+        _ => Err(format!(
+            "Selected directory contains {} Kairo project descriptors; choose a more specific project folder",
+            projects.len()
+        )),
+    }
+}
+
 /// Required project files must be regular files whose resolved location stays
 /// under the project root. This matches KairoPlayer's runtime boundary and
 /// prevents an apparently healthy project from reaching outside itself through
@@ -1036,7 +1064,10 @@ fn find_project_descriptors(
     for entry in fs::read_dir(root).map_err(|error| error.to_string())? {
         let entry = entry.map_err(|error| error.to_string())?;
         let path = entry.path();
-        if path.file_name().and_then(|name| name.to_str()) == Some(".git") {
+        if matches!(
+            path.file_name().and_then(|name| name.to_str()),
+            Some(".git" | ".kairo" | "Build" | "build" | "node_modules")
+        ) {
             continue;
         }
         let metadata = fs::symlink_metadata(&path).map_err(|error| error.to_string())?;
