@@ -10,6 +10,7 @@ type ProjectDescriptor = {
   inputMap: string;
   renderingProfile: string;
   graphicsBackend: string;
+  runtimeExecutable: string | null;
   enabledPlugins: string[];
   buildProfiles: ProjectBuildProfile[];
 };
@@ -80,6 +81,7 @@ app.innerHTML = `
         <div class="header-actions">
           <button id="clone-button" class="button secondary" type="button">Clone Kairo</button>
           <button id="external-import-button" class="button secondary" type="button">Import glTF repo</button>
+          <button id="local-external-import-button" class="button secondary" type="button">Import Directory</button>
           <button id="import-button" class="button secondary" type="button">Import Kairo</button>
           <button id="create-button" class="button primary" type="button">New project</button>
         </div>
@@ -132,6 +134,16 @@ app.innerHTML = `
       <div class="dialog-actions"><button value="cancel" class="button secondary">Cancel</button><button id="confirm-external-import" value="default" class="button primary">Clone and convert</button></div>
     </form>
   </dialog>
+  <dialog id="local-external-import-dialog">
+    <form method="dialog" class="dialog-form">
+      <div><p class="eyebrow">Local external content</p><h2>Import a local glTF / GLB directory</h2></div>
+      <label>Project directory<span class="path-field"><input id="local-external-root" required placeholder="/path/to/game-or-content" /><button id="browse-local-external-root" class="button secondary" type="button">Browse</button></span></label>
+      <label>Display name<input id="local-external-name" required placeholder="My Imported Game" /></label>
+      <label>Entry scene<input id="local-external-scene" placeholder="Optional: path/to/world.glb" /></label>
+      <p class="field-note">Kairo creates a .kairo bootstrap inside the selected directory and keeps the original assets in place. If several glTF/GLB files exist, specify the entry scene relative to that directory.</p>
+      <div class="dialog-actions"><button value="cancel" class="button secondary">Cancel</button><button id="confirm-local-external-import" value="default" class="button primary">Import directory</button></div>
+    </form>
+  </dialog>
   <dialog id="engine-dialog">
     <div class="dialog-form">
       <div><p class="eyebrow">Toolchain</p><h2>Kairo installations</h2></div>
@@ -166,6 +178,7 @@ const importDialog = document.querySelector<HTMLDialogElement>("#import-dialog")
 const createDialog = document.querySelector<HTMLDialogElement>("#create-dialog")!;
 const cloneDialog = document.querySelector<HTMLDialogElement>("#clone-dialog")!;
 const externalImportDialog = document.querySelector<HTMLDialogElement>("#external-import-dialog")!;
+const localExternalImportDialog = document.querySelector<HTMLDialogElement>("#local-external-import-dialog")!;
 const recoveryDialog = document.querySelector<HTMLDialogElement>("#recovery-dialog")!;
 const recoveryList = document.querySelector<HTMLDivElement>("#recovery-list")!;
 const packageDialog = document.querySelector<HTMLDialogElement>("#package-dialog")!;
@@ -314,6 +327,7 @@ document.querySelector("#import-button")!.addEventListener("click", () => import
 document.querySelector("#create-button")!.addEventListener("click", () => createDialog.showModal());
 document.querySelector("#clone-button")!.addEventListener("click", () => cloneDialog.showModal());
 document.querySelector("#external-import-button")!.addEventListener("click", () => externalImportDialog.showModal());
+document.querySelector("#local-external-import-button")!.addEventListener("click", () => localExternalImportDialog.showModal());
 document.querySelector("#engine-button")!.addEventListener("click", () => document.querySelector<HTMLDialogElement>("#engine-dialog")!.showModal());
 document.querySelector("#close-engine")!.addEventListener("click", () => document.querySelector<HTMLDialogElement>("#engine-dialog")!.close());
 document.querySelector("#close-recovery")!.addEventListener("click", () => recoveryDialog.close());
@@ -338,6 +352,15 @@ document.querySelector("#browse-clone-parent")!.addEventListener("click", async 
 document.querySelector("#browse-external-parent")!.addEventListener("click", async () => {
   const selected = await open({ multiple: false, directory: true });
   if (selected) document.querySelector<HTMLInputElement>("#external-import-parent")!.value = selected;
+});
+
+document.querySelector("#browse-local-external-root")!.addEventListener("click", async () => {
+  const selected = await open({ multiple: false, directory: true, title: "Select external game/content directory" });
+  if (!selected) return;
+  document.querySelector<HTMLInputElement>("#local-external-root")!.value = selected;
+  const name = selected.split(/[\\/]/).filter(Boolean).at(-1) ?? "Imported Game";
+  const display = document.querySelector<HTMLInputElement>("#local-external-name")!;
+  if (!display.value.trim()) display.value = name;
 });
 
 document.querySelector("#add-engine")!.addEventListener("click", async () => {
@@ -423,6 +446,27 @@ document.querySelector("#confirm-external-import")!.addEventListener("click", as
   } catch (error) { notify(String(error), true); }
 });
 
+document.querySelector("#confirm-local-external-import")!.addEventListener("click", async (event) => {
+  event.preventDefault();
+  const root = document.querySelector<HTMLInputElement>("#local-external-root")!.value.trim();
+  const displayName = document.querySelector<HTMLInputElement>("#local-external-name")!.value.trim();
+  const entrySceneValue = document.querySelector<HTMLInputElement>("#local-external-scene")!.value.trim();
+  if (!root || !displayName) return;
+  try {
+    const project = await invoke<string>("import_external_gltf_directory", {
+      root,
+      displayName,
+      entryScene: entrySceneValue || null
+    });
+    state = await invoke<HubState>("hub_state");
+    localExternalImportDialog.close();
+    await refreshHealth();
+    notify(`Local directory imported as Kairo project: ${project}`);
+  } catch (error) {
+    notify(String(error), true);
+  }
+});
+
 document.querySelector("#confirm-package")!.addEventListener("click", async (event) => {
   event.preventDefault();
   if (!packageProject || !packageProfile.value) return;
@@ -465,7 +509,7 @@ projectList.addEventListener("click", async (event) => {
       showPackage(path);
     } else if (target.dataset.action === "run") {
       const processId = await invoke<number>("launch_player", { path });
-      notify(`KairoPlayer launched (process ${processId})`);
+      notify(`Project runtime launched (process ${processId})`);
     } else {
       const processId = await invoke<number>("launch_editor", { path, recoverySnapshot: null });
       notify(`KairoEditor launched (process ${processId})`);
