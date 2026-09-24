@@ -477,7 +477,7 @@ projectList.addEventListener("click", async (event) => {
       showPackage(path);
     } else if (target.dataset.action === "run") {
       const processId = await invoke<number>("launch_player", { path });
-      notify(`KairoPlayer launched (process ${processId})`);
+      notify(`Project runtime launched (process ${processId})`);
     } else {
       const processId = await invoke<number>("launch_editor", { path, recoverySnapshot: null });
       notify(`KairoEditor launched (process ${processId})`);
