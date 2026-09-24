@@ -417,6 +417,20 @@ pub fn inspect_project(path: &Path) -> ProjectHealth {
     health
 }
 
+/// Imports an existing Kairo project descriptor after validating the complete
+/// bootstrap contract. This function performs no mutation; HubState decides
+/// whether to remember the project only after validation succeeds.
+pub fn import_project(path: &Path) -> Result<ProjectHealth, String> {
+    let health = inspect_project(path);
+    if !health.is_valid() {
+        return Err(format!(
+            "Project import failed: {}",
+            health.errors.join("; ")
+        ));
+    }
+    Ok(health)
+}
+
 /// Required project files must be regular files whose resolved location stays
 /// under the project root. This matches KairoPlayer's runtime boundary and
 /// prevents an apparently healthy project from reaching outside itself through
@@ -994,17 +1008,40 @@ fn find_project_descriptors(
     Ok(())
 }
 
+fn validate_clone_repository(repository: &str) -> Result<(), String> {
+    if repository.is_empty()
+        || repository.len() > 2048
+        || repository.chars().any(|ch| ch.is_control() || ch.is_whitespace())
+        || repository.contains(['?', '#'])
+    {
+        return Err("Repository URL is malformed".into());
+    }
+    let path = repository
+        .strip_prefix("https://github.com/")
+        .or_else(|| repository.strip_prefix("https://gitlab.com/"))
+        .ok_or_else(|| "Repository must use HTTPS on github.com or gitlab.com".to_string())?;
+    if !path.ends_with(".git") {
+        return Err("Repository URL must end in .git".into());
+    }
+    let project_path = &path[..path.len() - 4];
+    if project_path.is_empty()
+        || project_path.starts_with('/')
+        || project_path.ends_with('/')
+        || project_path.split('/').any(|part| {
+            part.is_empty() || part == "." || part == ".." || part.starts_with('-')
+        })
+    {
+        return Err("Repository URL has an invalid owner/project path".into());
+    }
+    Ok(())
+}
+
 pub fn clone_project(
     repository: &str,
     parent: &Path,
     folder_name: &str,
 ) -> Result<PathBuf, String> {
-    if !(repository.starts_with("https://github.com/")
-        || repository.starts_with("https://gitlab.com/"))
-        || !repository.ends_with(".git")
-    {
-        return Err("Repository must be an HTTPS GitHub or GitLab .git URL".into());
-    }
+    validate_clone_repository(repository)?;
     validate_clone_folder(folder_name)?;
     let destination = parent.join(folder_name);
     if destination.exists() {
@@ -1024,15 +1061,27 @@ pub fn clone_project(
         let _ = fs::remove_dir_all(&destination);
         return Err(format!("git clone failed with status {status}"));
     }
-    let mut descriptors = Vec::new();
-    find_project_descriptors(&destination, 0, &mut descriptors)?;
-    match descriptors.len() {
-        1 => Ok(descriptors.remove(0)),
-        0 => Err("Cloned repository contains no .kproject descriptor".into()),
-        count => Err(format!(
-            "Cloned repository contains {count} .kproject descriptors; import one explicitly"
-        )),
+
+    let result = (|| {
+        let mut descriptors = Vec::new();
+        find_project_descriptors(&destination, 0, &mut descriptors)?;
+        if descriptors.len() != 1 {
+            return Err(match descriptors.len() {
+                0 => "Cloned repository contains no .kproject descriptor".into(),
+                count => format!(
+                    "Cloned repository contains {count} .kproject descriptors; select one through local import instead"
+                ),
+            });
+        }
+        let descriptor = descriptors.remove(0);
+        import_project(&descriptor)?;
+        Ok(descriptor)
+    })();
+
+    if result.is_err() {
+        let _ = fs::remove_dir_all(&destination);
     }
+    result
 }
 
 pub fn launch_editor_with(
@@ -1394,8 +1443,18 @@ mod tests {
 
     #[test]
     fn clone_inputs_reject_option_and_untrusted_transport_injection() {
-        assert!(clone_project("--upload-pack=bad", Path::new("/tmp"), "Safe").is_err());
-        assert!(clone_project("git@github.com:owner/game.git", Path::new("/tmp"), "Safe").is_err());
+        assert!(validate_clone_repository("--upload-pack=bad").is_err());
+        assert!(validate_clone_repository("git@github.com:owner/game.git").is_err());
+        assert!(validate_clone_repository("http://github.com/owner/game.git").is_err());
+        assert!(validate_clone_repository("https://example.com/owner/game").is_err());
+        assert!(validate_clone_repository("https://example.com/owner/game.git").is_err());
+        assert!(validate_clone_repository("https://github.com/owner/game").is_err());
+        assert!(validate_clone_repository("https://github.com/../game.git").is_err());
+        assert!(validate_clone_repository("https://github.com/-owner/game.git").is_err());
+        assert!(validate_clone_repository("https://github.com/owner/game.git?x=1").is_err());
+        assert!(validate_clone_repository("https://github.com/owner/game.git#fragment").is_err());
+        assert!(validate_clone_repository("https://github.com/owner/game.git").is_ok());
+        assert!(validate_clone_repository("https://gitlab.com/group/subgroup/game.git").is_ok());
         assert!(
             clone_project(
                 "https://github.com/owner/game.git",
@@ -1404,6 +1463,18 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn local_import_requires_a_complete_runnable_kairo_project_contract() {
+        let temporary = tempfile::tempdir().unwrap();
+        let project = create_project(temporary.path(), "Imported", "Imported Game").unwrap();
+        let imported = import_project(&project).unwrap();
+        assert_eq!(imported.descriptor.unwrap().name, "Imported Game");
+
+        fs::remove_file(temporary.path().join("Imported/Scenes/Main.kscene")).unwrap();
+        let error = import_project(&project).unwrap_err();
+        assert!(error.contains("Missing startup scene"));
     }
 
     #[test]
