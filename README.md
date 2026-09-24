@@ -1,6 +1,12 @@
 # KairoHub
 
-KairoHub is the Tauri 2 project manager and process launcher for Kairo Game Engine. It validates projects before launch, creates canonical starter projects atomically, tracks recent and favorite projects, selects a registered engine installation, packages descriptor-defined build profiles, and starts that installation's KairoEditor or KairoPlayer. Editor recovery remains an explicit separate launch mode.
+KairoHub is the Tauri 2 project manager and process launcher for Kairo Game Engine. It validates projects before launch, creates canonical starter projects atomically, imports an existing local Kairo `.kproject`, clones a strict HTTPS GitHub/GitLab repository containing exactly one valid Kairo project, tracks recent and favorite projects, selects a registered engine installation, packages descriptor-defined build profiles, and starts that installation's KairoEditor or KairoPlayer. Editor recovery remains an explicit separate launch mode.
+
+"Import" means an existing **Kairo project**. KairoHub does not migrate Unity,
+Unreal, Godot, or arbitrary game executables/projects into Kairo. Running an
+imported Kairo project requires a selected installation with a built
+`KairoProjectCompiler` and `KairoPlayer`; Hub compiles attached logic before
+starting Player.
 
 ## Development
 
@@ -36,7 +42,8 @@ overwritten by Repair.
 - Discovers KairoEditor, KairoProjectCompiler, and KairoPlayer from one selected engine build.
 - Runs `<compiler> <project.kproject>` to publish source-bound attached logic, then spawns `<player> <project.kproject>` only when compilation succeeds; no command is routed through a shell.
 - Lists build profiles from the validated project descriptor and runs `<player> <project.kproject> --package <profile>` only after the same compiler gate succeeds. Replacement is explicit, and success is reported only after Hub verifies the published package manifest.
-- Clones shallow HTTPS GitHub/GitLab repositories without invoking a shell and imports a single discovered `.kproject`.
+- Imports a local `.kproject` only after its descriptor and required bootstrap files validate.
+- Clones only strict HTTPS `github.com`/`gitlab.com` `.git` URLs without a shell, does not follow repository symlinks while discovering projects, deletes an invalid clone, and accepts exactly one validated `.kproject`.
 - Repairs only missing bootstrap manifest/scene files after the descriptor itself parses successfully.
 
 Platform signing, shared-library deployment, and deeper dependency repair remain
