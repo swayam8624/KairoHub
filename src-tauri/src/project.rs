@@ -36,6 +36,7 @@ pub struct ProjectDescriptor {
     pub input_map: PathBuf,
     pub rendering_profile: String,
     pub graphics_backend: String,
+    pub play_executable: Option<PathBuf>,
     pub enabled_plugins: Vec<String>,
     pub build_profiles: Vec<ProjectBuildProfile>,
 }
@@ -201,6 +202,7 @@ pub fn parse_project(source: &str) -> Result<ProjectDescriptor, String> {
     let mut input_map = None;
     let mut rendering_profile = None;
     let mut graphics_backend = None;
+    let mut play_executable = None;
     let mut enabled_plugins = Vec::new();
     let mut build_profiles = Vec::new();
     for (index, line) in source.lines().enumerate() {
@@ -247,6 +249,11 @@ pub fn parse_project(source: &str) -> Result<ProjectDescriptor, String> {
             {
                 graphics_backend = Some(tokens[1].clone())
             }
+            "play-executable"
+                if tokens.len() == 2 && version == Some(2) && play_executable.is_none() =>
+            {
+                play_executable = Some(PathBuf::from(&tokens[1]))
+            }
             "plugin" if tokens.len() == 2 && version == Some(2) => {
                 enabled_plugins.push(tokens[1].clone())
             }
@@ -264,7 +271,7 @@ pub fn parse_project(source: &str) -> Result<ProjectDescriptor, String> {
                 ));
             }
             "engine-version" | "input-map" | "rendering-profile" | "graphics-backend"
-            | "plugin" | "build-profile" => {
+            | "play-executable" | "plugin" | "build-profile" => {
                 return Err(format!(
                     "{line_number}:1: malformed or version-incompatible '{}' statement",
                     tokens[0]
@@ -292,6 +299,7 @@ pub fn parse_project(source: &str) -> Result<ProjectDescriptor, String> {
         input_map: input_map.unwrap_or_else(|| PathBuf::from("Config/Input.kinput")),
         rendering_profile: rendering_profile.unwrap_or_else(|| "desktop".into()),
         graphics_backend: graphics_backend.unwrap_or_else(|| "auto".into()),
+        play_executable,
         enabled_plugins,
         build_profiles: if build_profiles.is_empty() {
             vec![
@@ -316,6 +324,9 @@ pub fn parse_project(source: &str) -> Result<ProjectDescriptor, String> {
     validate_relative_path(&descriptor.asset_manifest, "assets")?;
     validate_relative_path(&descriptor.startup_scene, "startup-scene")?;
     validate_relative_path(&descriptor.input_map, "input-map")?;
+    if let Some(play_executable) = &descriptor.play_executable {
+        validate_relative_path(play_executable, "play-executable")?;
+    }
     if descriptor.asset_manifest == descriptor.startup_scene {
         return Err("asset manifest and startup scene must be different".into());
     }
@@ -1469,7 +1480,13 @@ fn validate_player_operation(
         ));
     }
     validate_project_engine_version(&health, installation)?;
-    if !installation.player_available || !installation.player.is_file() {
+    let descriptor = health
+        .descriptor
+        .as_ref()
+        .ok_or("Project validation succeeded without descriptor metadata")?;
+    if descriptor.play_executable.is_none()
+        && (!installation.player_available || !installation.player.is_file())
+    {
         return Err(format!(
             "Selected KairoPlayer build is missing: {}",
             installation.player.display()
@@ -1505,8 +1522,36 @@ pub fn launch_player_with(
     project: &Path,
     installation: &EngineInstallation,
 ) -> Result<Child, String> {
-    let _health = validate_player_operation(project, installation)?;
+    let health = validate_player_operation(project, installation)?;
     compile_project_logic(project, installation)?;
+    let descriptor = health
+        .descriptor
+        .as_ref()
+        .ok_or("Project validation succeeded without descriptor metadata")?;
+
+    if let Some(relative) = &descriptor.play_executable {
+        let project_file = fs::canonicalize(project)
+            .map_err(|error| format!("Cannot resolve project descriptor: {error}"))?;
+        let root = project_file
+            .parent()
+            .ok_or("Project descriptor has no parent directory")?;
+        let executable = fs::canonicalize(root.join(relative))
+            .map_err(|error| format!(
+                "Project Play executable is missing or unreadable '{}': {error}",
+                relative.display()
+            ))?;
+        if !executable.starts_with(root) || !executable.is_file() {
+            return Err("Project Play executable escapes the project root or is not a file".into());
+        }
+        return Command::new(&executable)
+            .arg(&project_file)
+            .spawn()
+            .map_err(|error| format!(
+                "Cannot launch project Play executable '{}': {error}",
+                executable.display()
+            ));
+    }
+
     Command::new(&installation.player)
         .arg(project)
         .spawn()
