@@ -9,10 +9,9 @@ fn main() {
 
 fn run() -> Result<(), String> {
     let mut arguments = std::env::args().skip(1);
-    let root = arguments
-        .next()
-        .map(PathBuf::from)
-        .ok_or_else(|| "usage: kairo-hub-import <root> <display-name> <engine-version> [entry-scene]".to_string())?;
+    let root = arguments.next().map(PathBuf::from).ok_or_else(|| {
+        "usage: kairo-hub-import <root> <display-name> <engine-version> [entry-scene]".to_string()
+    })?;
     let display_name = arguments
         .next()
         .ok_or_else(|| "missing display name".to_string())?;
