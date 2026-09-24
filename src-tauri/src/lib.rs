@@ -1,4 +1,4 @@
-mod project;
+pub mod project;
 
 use project::{EngineInstallation, HubState, PackageArtifact, ProjectHealth, RecoverySnapshotInfo};
 use std::fs;
