@@ -346,7 +346,7 @@ document.querySelector("#confirm-import")!.addEventListener("click", async (even
   const path = document.querySelector<HTMLInputElement>("#import-path")!.value.trim();
   if (!path) return;
   try {
-    state = await invoke<HubState>("remember_project", { path });
+    state = await invoke<HubState>("import_project", { path });
     importDialog.close();
     await refreshHealth();
     notify("Project imported");
