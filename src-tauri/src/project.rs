@@ -2072,6 +2072,82 @@ mod tests {
         );
     }
 
+    #[test]
+    fn project_v2_parses_optional_runtime_executable() {
+        let descriptor = parse_project(
+            "kairo-project 2\nname \"Custom Runtime\"\nengine-version \"0.1.0\"\nassets \"Assets.kassets\"\nstartup-scene \"Scenes/Main.kscene\"\ninput-map \"Config/Input.kinput\"\nrendering-profile \"desktop\"\ngraphics-backend \"auto\"\nruntime-executable \"Build/Development/Game\"\nbuild-profile \"Development\" development \"Build/Development\"\n"
+        )
+        .unwrap();
+        assert_eq!(
+            descriptor.runtime_executable,
+            Some(PathBuf::from("Build/Development/Game"))
+        );
+        assert!(parse_project(
+            "kairo-project 2\nname \"Bad\"\nengine-version \"0.1.0\"\nassets \"Assets.kassets\"\nstartup-scene \"Scenes/Main.kscene\"\ninput-map \"Config/Input.kinput\"\nrendering-profile \"desktop\"\nruntime-executable \"../escape\"\nbuild-profile \"Development\" development \"Build/Development\"\n"
+        )
+        .is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn project_run_prefers_custom_runtime_over_generic_player() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temporary = tempfile::tempdir().unwrap();
+        let project = create_project(
+            temporary.path(), "CustomRuntime", "Custom Runtime").unwrap();
+        let root = project.parent().unwrap();
+        let descriptor_source = fs::read_to_string(&project).unwrap();
+        let descriptor_source = descriptor_source.replace(
+            "graphics-backend \"auto\"\n",
+            "graphics-backend \"auto\"\nruntime-executable \"Build/Development/CustomGame\"\n",
+        );
+        fs::write(&project, descriptor_source).unwrap();
+
+        let runtime = root.join("Build/Development/CustomGame");
+        fs::create_dir_all(runtime.parent().unwrap()).unwrap();
+        let runtime_marker = root.join("custom-runtime-started");
+        fs::write(
+            &runtime,
+            format!("#!/bin/sh\ntouch '{}'\n", runtime_marker.display()),
+        )
+        .unwrap();
+        fs::set_permissions(&runtime, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let compiler = temporary.path().join("compiler.sh");
+        fs::write(&compiler, "#!/bin/sh\nexit 0\n").unwrap();
+        fs::set_permissions(&compiler, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let generic_player = temporary.path().join("generic-player.sh");
+        let generic_marker = temporary.path().join("generic-player-started");
+        fs::write(
+            &generic_player,
+            format!("#!/bin/sh\ntouch '{}'\n", generic_marker.display()),
+        )
+        .unwrap();
+        fs::set_permissions(
+            &generic_player,
+            fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+
+        let installation = EngineInstallation {
+            root: temporary.path().to_path_buf(),
+            version: "0.1.0".into(),
+            editor: temporary.path().join("Editor"),
+            editor_available: false,
+            project_compiler: compiler,
+            project_compiler_available: true,
+            player: generic_player,
+            player_available: true,
+        };
+
+        let mut child = launch_player_with(&project, &installation).unwrap();
+        assert!(child.wait().unwrap().success());
+        assert!(runtime_marker.is_file());
+        assert!(!generic_marker.exists());
+    }
+
     #[cfg(unix)]
     #[test]
     fn packaging_uses_exact_profile_and_verified_player_artifact() {
