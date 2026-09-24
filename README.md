@@ -17,11 +17,16 @@ cargo test --manifest-path src-tauri/Cargo.toml
 npm run tauri dev
 ```
 
-KairoEditor discovery uses the first executable found in:
+Engine discovery validates a KairoGameEngine root, then resolves built tools
+from the current sibling-superbuild layout first:
 
-1. `KAIRO_EDITOR_EXECUTABLE`
-2. `$KAIRO_ENGINE_ROOT/KairoEditor/build/KairoEditorApp`
-3. `KairoEditor/build/KairoEditorApp` relative to the launch directory
+1. `build/dev-clang/components/KairoEditor/KairoEditorApp`
+2. `build/dev/components/KairoEditor/KairoEditorApp`
+3. `build/release/components/KairoEditor/KairoEditorApp`
+4. legacy pre-sibling build locations only as compatibility fallbacks
+
+`KairoProjectCompiler` follows the same `components/KairoEditor` layout;
+`KairoPlayer` remains under `build/<preset>/Runtime/KairoPlayer`.
 
 Recovery lists project-owned `.kairo/recovery/snapshot-*` journals newest first,
 stream-validates bounded payload sizes and checksums, and reports damaged entries
