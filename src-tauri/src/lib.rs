@@ -144,6 +144,21 @@ fn select_engine(root: PathBuf, state: State<'_, ManagedHubState>) -> Result<Hub
 }
 
 #[tauri::command]
+fn import_project_directory(
+    root: PathBuf,
+    state: State<'_, ManagedHubState>,
+) -> Result<PathBuf, String> {
+    let path = project::import_project_directory(&root)?;
+    let mut value = state
+        .value
+        .lock()
+        .map_err(|_| "KairoHub state lock was poisoned".to_string())?;
+    value.remember(path.clone());
+    save_state(&state.data_file, &value)?;
+    Ok(path)
+}
+
+#[tauri::command]
 fn create_project(
     parent: PathBuf,
     folder_name: String,
@@ -307,6 +322,7 @@ pub fn run() {
             hub_state,
             inspect_project,
             import_project,
+            import_project_directory,
             set_favorite,
             engine_installations,
             register_engine,
