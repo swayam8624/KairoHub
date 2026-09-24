@@ -72,11 +72,8 @@ fn inspect_project(path: PathBuf) -> ProjectHealth {
 }
 
 #[tauri::command]
-fn remember_project(path: PathBuf, state: State<'_, ManagedHubState>) -> Result<HubState, String> {
-    let health = project::inspect_project(&path);
-    if health.descriptor.is_none() {
-        return Err(health.errors.join("; "));
-    }
+fn import_project(path: PathBuf, state: State<'_, ManagedHubState>) -> Result<HubState, String> {
+    project::import_project(&path)?;
     let mut value = state
         .value
         .lock()
@@ -275,7 +272,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             hub_state,
             inspect_project,
-            remember_project,
+            import_project,
             set_favorite,
             engine_installations,
             register_engine,
