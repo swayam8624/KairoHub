@@ -948,6 +948,9 @@ pub fn inspect_engine(root: &Path) -> Result<EngineInstallation, String> {
     let editor = engine_executable(
         root,
         &[
+            "build/dev-clang/components/KairoEditor/KairoEditorApp",
+            "build/dev/components/KairoEditor/KairoEditorApp",
+            "build/release/components/KairoEditor/KairoEditorApp",
             "build/dev-clang/KairoEditor/KairoEditorApp",
             "build/dev/KairoEditor/KairoEditorApp",
             "build/release/KairoEditor/KairoEditorApp",
@@ -965,6 +968,9 @@ pub fn inspect_engine(root: &Path) -> Result<EngineInstallation, String> {
     let project_compiler = engine_executable(
         root,
         &[
+            "build/dev-clang/components/KairoEditor/KairoProjectCompiler",
+            "build/dev/components/KairoEditor/KairoProjectCompiler",
+            "build/release/components/KairoEditor/KairoProjectCompiler",
             "build/dev-clang/KairoEditor/KairoProjectCompiler",
             "build/dev/KairoEditor/KairoProjectCompiler",
             "build/release/KairoEditor/KairoProjectCompiler",
@@ -1555,13 +1561,13 @@ mod tests {
         .unwrap();
         let editor = temporary
             .path()
-            .join("build/dev-clang/KairoEditor/KairoEditorApp");
+            .join("build/dev-clang/components/KairoEditor/KairoEditorApp");
         let player = temporary
             .path()
             .join("build/dev-clang/Runtime/KairoPlayer/KairoPlayer");
         let project_compiler = temporary
             .path()
-            .join("build/dev-clang/KairoEditor/KairoProjectCompiler");
+            .join("build/dev-clang/components/KairoEditor/KairoProjectCompiler");
         fs::create_dir_all(editor.parent().unwrap()).unwrap();
         fs::create_dir_all(player.parent().unwrap()).unwrap();
         fs::write(&editor, b"fixture").unwrap();
