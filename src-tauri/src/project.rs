@@ -1916,7 +1916,8 @@ mod tests {
         let build = temporary.path().join("Imported/Build/Release");
         fs::create_dir_all(&build).unwrap();
         fs::copy(&project, build.join("Packaged.kproject")).unwrap();
-        let discovered = import_project_directory(temporary.path().join("Imported").as_path()).unwrap();
+        let discovered =
+            import_project_directory(temporary.path().join("Imported").as_path()).unwrap();
         assert_eq!(discovered, fs::canonicalize(project).unwrap());
     }
 
