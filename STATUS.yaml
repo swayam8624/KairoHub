@@ -1,0 +1,20 @@
+schema: kairo.repo-status.v1
+repository: KairoHub
+wave: D/F
+scope: project-launcher-v1
+completion_score: 95
+target_score: 95
+score_policy: frozen_scope_source_completeness
+source_gate: complete
+exact_head_execution: pending_external_runner
+verification_gate: npm-build-cargo-test-launch-contract
+research_track: none
+warning_policy: zero-kairo-owned-warnings
+post_v1_scope:
+  - platform signing
+  - shared-library deployment
+  - deep dependency repair
+score_meaning:
+  implementation_and_contract: complete_for_frozen_v1
+  verification: tracked_separately_from_completion_score
+  post_v1_features: excluded_from_v1_completion_score
