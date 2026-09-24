@@ -53,3 +53,23 @@ overwritten by Repair.
 
 Platform signing, shared-library deployment, and deeper dependency repair remain
 future release-engineering work; they are not represented as inert UI controls.
+
+
+## External glTF / GLB import
+
+KairoHub now distinguishes **Clone Kairo** from **Import glTF repo**.
+
+`Clone Kairo` requires the repository to already contain exactly one valid
+`.kproject`. It is not an engine-conversion feature.
+
+`Import glTF repo` accepts an HTTPS GitHub/GitLab repository containing
+portable glTF/GLB scene content. If the repository contains exactly one
+`.gltf`/`.glb`, Hub selects it automatically; otherwise the user must provide
+the project-relative entry scene. Hub generates `KairoImported.kproject` plus
+bounded `.kairo` bootstrap files and then uses the same Kairo project
+validation/compiler/player path as native projects.
+
+This v1 importer preserves a truthful boundary: it imports portable scene
+content, not arbitrary source gameplay from another engine. Unity, Godot and
+Unreal projects require dedicated semantic importers before they can be claimed
+as supported.
