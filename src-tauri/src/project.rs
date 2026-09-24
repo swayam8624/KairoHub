@@ -1028,7 +1028,8 @@ fn validate_clone_repository(repository: &str) -> Result<(), String> {
     if repository.is_empty()
         || repository.len() > 2048
         || repository.chars().any(|ch| ch.is_control() || ch.is_whitespace())
-        || repository.contains(['?', '#'])
+        || repository.contains('?')
+        || repository.contains('#')
     {
         return Err("Repository URL is malformed".into());
     }
