@@ -83,7 +83,6 @@ fn import_project(path: PathBuf, state: State<'_, ManagedHubState>) -> Result<Hu
     Ok(value.clone())
 }
 
-
 #[tauri::command]
 fn import_project_directory(
     root: PathBuf,
