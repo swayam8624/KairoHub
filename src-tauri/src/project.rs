@@ -1575,21 +1575,24 @@ pub fn launch_player_with(
         let root = project_file
             .parent()
             .ok_or("Project descriptor has no parent directory")?;
-        let executable = fs::canonicalize(root.join(relative))
-            .map_err(|error| format!(
+        let executable = fs::canonicalize(root.join(relative)).map_err(|error| {
+            format!(
                 "Project Play executable is missing or unreadable '{}': {error}",
                 relative.display()
-            ))?;
+            )
+        })?;
         if !executable.starts_with(root) || !executable.is_file() {
             return Err("Project Play executable escapes the project root or is not a file".into());
         }
         return Command::new(&executable)
             .arg(&project_file)
             .spawn()
-            .map_err(|error| format!(
-                "Cannot launch project Play executable '{}': {error}",
-                executable.display()
-            ));
+            .map_err(|error| {
+                format!(
+                    "Cannot launch project Play executable '{}': {error}",
+                    executable.display()
+                )
+            });
     }
 
     Command::new(&installation.player)
@@ -1899,6 +1902,25 @@ mod tests {
     }
 
     #[test]
+    fn local_directory_import_discovers_one_kairo_project() {
+        let temporary = tempfile::tempdir().unwrap();
+        let project = create_project(temporary.path(), "Imported", "Imported Game").unwrap();
+        let discovered = import_project_directory(temporary.path()).unwrap();
+        assert_eq!(discovered, fs::canonicalize(project).unwrap());
+    }
+
+    #[test]
+    fn local_directory_import_ignores_generated_project_copies() {
+        let temporary = tempfile::tempdir().unwrap();
+        let project = create_project(temporary.path(), "Imported", "Imported Game").unwrap();
+        let build = temporary.path().join("Imported/Build/Release");
+        fs::create_dir_all(&build).unwrap();
+        fs::copy(&project, build.join("Packaged.kproject")).unwrap();
+        let discovered = import_project_directory(temporary.path().join("Imported").as_path()).unwrap();
+        assert_eq!(discovered, fs::canonicalize(project).unwrap());
+    }
+
+    #[test]
     fn external_gltf_generation_creates_a_runnable_kairo_bootstrap() {
         let temporary = tempfile::tempdir().unwrap();
         let root = temporary.path().join("ExternalGame");
@@ -2152,8 +2174,14 @@ mod tests {
 
         let mut child = launch_player_with(&project, &installation).unwrap();
         assert!(child.wait().unwrap().success());
-        assert!(runtime_marker.exists(), "custom project runtime did not launch");
-        assert!(!generic_marker.exists(), "generic KairoPlayer launched instead");
+        assert!(
+            runtime_marker.exists(),
+            "custom project runtime did not launch"
+        );
+        assert!(
+            !generic_marker.exists(),
+            "generic KairoPlayer launched instead"
+        );
     }
 
     #[cfg(unix)]
