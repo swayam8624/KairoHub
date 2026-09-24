@@ -363,7 +363,7 @@ pub fn inspect_project(path: &Path) -> ProjectHealth {
             .push("Project descriptor must use the .kproject extension".into());
         return health;
     }
-    let metadata = match fs::metadata(path) {
+    let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(error) => {
             health
@@ -372,6 +372,16 @@ pub fn inspect_project(path: &Path) -> ProjectHealth {
             return health;
         }
     };
+    if metadata.file_type().is_symlink() {
+        health
+            .errors
+            .push("Project descriptor cannot be a symbolic link".into());
+        return health;
+    }
+    if !metadata.is_file() {
+        health.errors.push("Project descriptor must be a regular file".into());
+        return health;
+    }
     if metadata.len() > MAX_PROJECT_BYTES {
         health
             .errors
@@ -999,9 +1009,15 @@ fn find_project_descriptors(
         if path.file_name().and_then(|name| name.to_str()) == Some(".git") {
             continue;
         }
-        if path.is_dir() {
+        let metadata = fs::symlink_metadata(&path).map_err(|error| error.to_string())?;
+        if metadata.file_type().is_symlink() {
+            continue;
+        }
+        if metadata.is_dir() {
             find_project_descriptors(&path, depth + 1, output)?;
-        } else if path.extension().and_then(|extension| extension.to_str()) == Some("kproject") {
+        } else if metadata.is_file()
+            && path.extension().and_then(|extension| extension.to_str()) == Some("kproject")
+        {
             output.push(path);
         }
     }
@@ -1024,11 +1040,17 @@ fn validate_clone_repository(repository: &str) -> Result<(), String> {
         return Err("Repository URL must end in .git".into());
     }
     let project_path = &path[..path.len() - 4];
-    if project_path.is_empty()
+    let parts = project_path.split('/').collect::<Vec<_>>();
+    if parts.len() < 2
         || project_path.starts_with('/')
         || project_path.ends_with('/')
-        || project_path.split('/').any(|part| {
-            part.is_empty() || part == "." || part == ".." || part.starts_with('-')
+        || parts.iter().any(|part| {
+            part.is_empty()
+                || *part == "."
+                || *part == ".."
+                || part.starts_with('-')
+                || !part.chars().all(|ch| ch.is_ascii_alphanumeric()
+                    || matches!(ch, '-' | '_' | '.'))
         })
     {
         return Err("Repository URL has an invalid owner/project path".into());
@@ -1052,6 +1074,7 @@ pub fn clone_project(
     }
     fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     let status = Command::new("git")
+        .env("GIT_TERMINAL_PROMPT", "0")
         .args(["clone", "--depth", "1", "--"])
         .arg(repository)
         .arg(&destination)
@@ -1453,6 +1476,8 @@ mod tests {
         assert!(validate_clone_repository("https://github.com/-owner/game.git").is_err());
         assert!(validate_clone_repository("https://github.com/owner/game.git?x=1").is_err());
         assert!(validate_clone_repository("https://github.com/owner/game.git#fragment").is_err());
+        assert!(validate_clone_repository("https://github.com/game.git").is_err());
+        assert!(validate_clone_repository("https://github.com/owner/%2e%2e/game.git").is_err());
         assert!(validate_clone_repository("https://github.com/owner/game.git").is_ok());
         assert!(validate_clone_repository("https://gitlab.com/group/subgroup/game.git").is_ok());
         assert!(
