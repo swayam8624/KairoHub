@@ -10,6 +10,7 @@ type ProjectDescriptor = {
   inputMap: string;
   renderingProfile: string;
   graphicsBackend: string;
+  playExecutable: string | null;
   enabledPlugins: string[];
   buildProfiles: ProjectBuildProfile[];
 };
