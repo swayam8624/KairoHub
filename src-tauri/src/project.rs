@@ -2094,8 +2094,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let temporary = tempfile::tempdir().unwrap();
-        let project = create_project(
-            temporary.path(), "CustomRuntime", "Custom Runtime").unwrap();
+        let project = create_project(temporary.path(), "CustomRuntime", "Custom Runtime").unwrap();
         let root = project.parent().unwrap();
         let descriptor_source = fs::read_to_string(&project).unwrap();
         let descriptor_source = descriptor_source.replace(
@@ -2125,11 +2124,7 @@ mod tests {
             format!("#!/bin/sh\ntouch '{}'\n", generic_marker.display()),
         )
         .unwrap();
-        fs::set_permissions(
-            &generic_player,
-            fs::Permissions::from_mode(0o755),
-        )
-        .unwrap();
+        fs::set_permissions(&generic_player, fs::Permissions::from_mode(0o755)).unwrap();
 
         let installation = EngineInstallation {
             root: temporary.path().to_path_buf(),
