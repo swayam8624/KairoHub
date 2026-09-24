@@ -8,5 +8,7 @@ export default defineConfig({
     watch: { ignored: ["**/src-tauri/**"] }
   },
   envPrefix: ["VITE_", "TAURI_ENV_"],
-  build: { target: "es2022", minify: "esbuild", sourcemap: true }
+  // Tauri ships a current embedded webview. Keep the frontend on Vite's
+  // Rolldown/Oxc path instead of forcing the deprecated esbuild fallback.
+  build: { target: "esnext", sourcemap: true }
 });
