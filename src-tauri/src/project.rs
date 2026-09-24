@@ -1065,6 +1065,266 @@ fn validate_clone_repository(repository: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_external_scene_path(path: &Path) -> Result<(), String> {
+    validate_relative_path(path, "external scene")?;
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase())
+        .ok_or_else(|| "External scene must have a .gltf or .glb extension".to_string())?;
+    if !matches!(extension.as_str(), "gltf" | "glb") {
+        return Err("External scene must have a .gltf or .glb extension".into());
+    }
+    Ok(())
+}
+
+fn portable_relative_path(path: &Path) -> Result<String, String> {
+    validate_relative_path(path, "external scene")?;
+    let mut parts = Vec::new();
+    for component in path.components() {
+        let Component::Normal(value) = component else {
+            return Err("External scene path contains a non-normal component".into());
+        };
+        parts.push(
+            value
+                .to_str()
+                .ok_or_else(|| "External scene path must be valid UTF-8".to_string())?,
+        );
+    }
+    if parts.is_empty() {
+        return Err("External scene path cannot be empty".into());
+    }
+    Ok(parts.join("/"))
+}
+
+fn find_external_scene_candidates(
+    root: &Path,
+    current: &Path,
+    depth: usize,
+    output: &mut Vec<PathBuf>,
+) -> Result<(), String> {
+    const MAX_DEPTH: usize = 8;
+    const MAX_CANDIDATES: usize = 256;
+    if depth > MAX_DEPTH {
+        return Ok(());
+    }
+    for entry in fs::read_dir(current).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let path = entry.path();
+        let name = path.file_name().and_then(|value| value.to_str()).unwrap_or("");
+        if matches!(name, ".git" | ".kairo" | "Build" | "build" | "node_modules") {
+            continue;
+        }
+        let metadata = fs::symlink_metadata(&path).map_err(|error| error.to_string())?;
+        if metadata.file_type().is_symlink() {
+            continue;
+        }
+        if metadata.is_dir() {
+            find_external_scene_candidates(root, &path, depth + 1, output)?;
+            continue;
+        }
+        if !metadata.is_file() {
+            continue;
+        }
+        let extension = path
+            .extension()
+            .and_then(|value| value.to_str())
+            .map(|value| value.to_ascii_lowercase());
+        if !matches!(extension.as_deref(), Some("gltf" | "glb")) {
+            continue;
+        }
+        let relative = path
+            .strip_prefix(root)
+            .map_err(|_| "External scene escaped the cloned repository".to_string())?
+            .to_path_buf();
+        validate_external_scene_path(&relative)?;
+        output.push(relative);
+        if output.len() > MAX_CANDIDATES {
+            return Err(format!(
+                "External repository contains more than {MAX_CANDIDATES} glTF/GLB scenes; specify a narrower entry scene"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn resolve_external_scene(root: &Path, requested: Option<&str>) -> Result<PathBuf, String> {
+    let relative = if let Some(requested) = requested.filter(|value| !value.trim().is_empty()) {
+        let path = PathBuf::from(requested.trim());
+        validate_external_scene_path(&path)?;
+        path
+    } else {
+        let mut candidates = Vec::new();
+        find_external_scene_candidates(root, root, 0, &mut candidates)?;
+        candidates.sort();
+        match candidates.len() {
+            0 => {
+                return Err(
+                    "External repository contains no .gltf or .glb scene. Kairo's external importer v1 supports glTF/GLB content repositories only."
+                        .into(),
+                )
+            }
+            1 => candidates.remove(0),
+            _ => {
+                let preview = candidates
+                    .iter()
+                    .take(8)
+                    .map(|path| portable_relative_path(path).unwrap_or_else(|_| path.display().to_string()))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return Err(format!(
+                    "External repository contains {} glTF/GLB scenes. Specify the entry scene explicitly. Candidates: {}{}",
+                    candidates.len(),
+                    preview,
+                    if candidates.len() > 8 { ", ..." } else { "" }
+                ));
+            }
+        }
+    };
+
+    let candidate = root.join(&relative);
+    let metadata = fs::symlink_metadata(&candidate)
+        .map_err(|error| format!("Cannot inspect external scene {}: {error}", relative.display()))?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err("External scene must be a regular non-symlink file".into());
+    }
+    let canonical_root = fs::canonicalize(root)
+        .map_err(|error| format!("Cannot resolve external repository root: {error}"))?;
+    let canonical_scene = fs::canonicalize(&candidate)
+        .map_err(|error| format!("Cannot resolve external scene: {error}"))?;
+    if !canonical_scene.starts_with(&canonical_root) {
+        return Err("External scene resolves outside the cloned repository".into());
+    }
+    Ok(relative)
+}
+
+fn generate_external_gltf_project(
+    root: &Path,
+    scene_relative: &Path,
+    display_name: &str,
+    engine_version: &str,
+) -> Result<PathBuf, String> {
+    validate_external_scene_path(scene_relative)?;
+    if display_name.trim().is_empty() || display_name.contains(['\n', '\r']) {
+        return Err("Imported project display name must be non-empty and single-line".into());
+    }
+    if engine_version.trim().is_empty() || engine_version.contains(['\n', '\r']) {
+        return Err("Imported project engine version must be non-empty and single-line".into());
+    }
+    let portable_scene = portable_relative_path(scene_relative)?;
+    let asset_id = "90000000-0000-4000-8000-000000000001";
+
+    let generated_root = root.join(".kairo");
+    let scenes_dir = generated_root.join("Scenes");
+    let config_dir = generated_root.join("Config");
+    fs::create_dir_all(&scenes_dir).map_err(|error| error.to_string())?;
+    fs::create_dir_all(&config_dir).map_err(|error| error.to_string())?;
+
+    let manifest = format!(
+        "kairo-assets 1\nasset {asset_id} scene source 1 {} \"kairo.gltf.scene\"\nend\n",
+        quote(&portable_scene)
+    );
+    write_atomic(&generated_root.join("Assets.kassets"), &manifest)?;
+
+    let scene = format!(
+        "kairo-scene 4\n\
+entity 1 \"Imported Scene\"\n\
+enabled true\n\
+layer 0\n\
+transform 0 0 0 0 0 0 1 1 1 1\n\
+scene-instance {asset_id} true true true 18446744073709551615\n\
+end\n\
+entity 2 \"Main Camera\"\n\
+enabled true\n\
+layer 0\n\
+transform 0 2.5 6 0 0 0 1 1 1 1\n\
+camera perspective 0.87266463 10 0.1 500 0 true environment 0.02 0.025 0.035 1 18446744073709551615\n\
+end\n\
+entity 3 \"Sun\"\n\
+enabled true\n\
+layer 0\n\
+transform 0 5 3 -0.38268343 0 0 0.9238795 1 1 1\n\
+light directional 1 0.95 0.85 60000 lux 100 0.34906585 0.52359878 1 1 soft 0.001 0.01 18446744073709551615\n\
+end\n\
+entity 4 \"World\"\n\
+enabled true\n\
+layer 0\n\
+transform 0 0 0 0 0 0 1 1 1 1\n\
+environment true 10 0.02 0.03 0.05 none 0.12 1 disabled 0.5 0.5 0.5 0.01 0 1000 0 aces global\n\
+end\n"
+    );
+    write_atomic(&scenes_dir.join("Imported.kscene"), &scene)?;
+    write_atomic(
+        &config_dir.join("Input.kinput"),
+        "kairo-input 1\naction \"Quit\" button\nbind \"Quit\" key Escape 1 0 0\n",
+    )?;
+
+    let descriptor = format!(
+        "kairo-project 2\nname {}\nengine-version {}\nassets \".kairo/Assets.kassets\"\nstartup-scene \".kairo/Scenes/Imported.kscene\"\ninput-map \".kairo/Config/Input.kinput\"\nrendering-profile \"desktop\"\ngraphics-backend \"auto\"\nbuild-profile \"Development\" development \"Build/Development\"\nbuild-profile \"Release\" release \"Build/Release\"\n",
+        quote(display_name.trim()),
+        quote(engine_version.trim())
+    );
+    let project = root.join("KairoImported.kproject");
+    if project.exists() {
+        return Err("External repository already contains KairoImported.kproject; refusing to overwrite it".into());
+    }
+    write_atomic(&project, &descriptor)?;
+
+    let health = import_project(&project)?;
+    if !health.is_valid() {
+        return Err(format!("Generated external Kairo project is invalid: {}", health.errors.join("; ")));
+    }
+    Ok(project)
+}
+
+/// Clones a non-Kairo repository and converts one glTF/GLB scene into a real
+/// runnable Kairo project. This is intentionally not an arbitrary Unity/Godot/
+/// Unreal converter: gameplay code and proprietary engine metadata are not
+/// silently translated.
+pub fn clone_external_gltf_project(
+    repository: &str,
+    parent: &Path,
+    folder_name: &str,
+    entry_scene: Option<&str>,
+    engine_version: &str,
+) -> Result<PathBuf, String> {
+    validate_clone_repository(repository)?;
+    validate_clone_folder(folder_name)?;
+    let destination = parent.join(folder_name);
+    if destination.exists() {
+        return Err(format!(
+            "Clone destination already exists: {}",
+            destination.display()
+        ));
+    }
+    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    let status = Command::new("git")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .args(["clone", "--depth", "1", "--"])
+        .arg(repository)
+        .arg(&destination)
+        .status()
+        .map_err(|error| format!("Cannot start git clone: {error}"))?;
+    if !status.success() {
+        let _ = fs::remove_dir_all(&destination);
+        return Err(format!("git clone failed with status {status}"));
+    }
+
+    let result = (|| {
+        let scene = resolve_external_scene(&destination, entry_scene)?;
+        generate_external_gltf_project(
+            &destination,
+            &scene,
+            folder_name,
+            engine_version,
+        )
+    })();
+    if result.is_err() {
+        let _ = fs::remove_dir_all(&destination);
+    }
+    result
+}
+
 pub fn clone_project(
     repository: &str,
     parent: &Path,
@@ -1507,6 +1767,58 @@ mod tests {
         fs::remove_file(temporary.path().join("Imported/Scenes/Main.kscene")).unwrap();
         let error = import_project(&project).unwrap_err();
         assert!(error.contains("Missing startup scene"));
+    }
+
+    #[test]
+    fn external_gltf_generation_creates_a_runnable_kairo_bootstrap() {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().join("ExternalGame");
+        fs::create_dir_all(root.join("content")).unwrap();
+        fs::write(root.join("content/world.glb"), b"glb fixture placeholder").unwrap();
+
+        let project = generate_external_gltf_project(
+            &root,
+            Path::new("content/world.glb"),
+            "External Game",
+            "0.1.0",
+        )
+        .unwrap();
+
+        let health = inspect_project(&project);
+        assert!(health.is_valid(), "{:?}", health.errors);
+        assert_eq!(health.descriptor.unwrap().name, "External Game");
+
+        let manifest = fs::read_to_string(root.join(".kairo/Assets.kassets")).unwrap();
+        assert!(manifest.contains("content/world.glb"));
+        assert!(manifest.contains("kairo.gltf.scene"));
+
+        let scene = fs::read_to_string(root.join(".kairo/Scenes/Imported.kscene")).unwrap();
+        assert!(scene.contains("scene-instance 90000000-0000-4000-8000-000000000001"));
+        assert!(scene.contains("camera perspective"));
+        assert!(scene.contains("light directional"));
+    }
+
+    #[test]
+    fn external_gltf_generation_rejects_escape_and_wrong_format() {
+        let temporary = tempfile::tempdir().unwrap();
+        assert!(
+            generate_external_gltf_project(
+                temporary.path(),
+                Path::new("../outside.glb"),
+                "Bad",
+                "0.1.0",
+            )
+            .is_err()
+        );
+        assert!(
+            generate_external_gltf_project(
+                temporary.path(),
+                Path::new("scene.fbx"),
+                "Bad",
+                "0.1.0",
+            )
+            .is_err()
+        );
     }
 
     #[test]
