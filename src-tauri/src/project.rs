@@ -1380,6 +1380,28 @@ pub fn clone_external_gltf_project(
     result
 }
 
+pub fn import_project_directory(root: &Path) -> Result<PathBuf, String> {
+    if !root.is_dir() {
+        return Err(format!(
+            "Kairo project import root is not a directory: {}",
+            root.display()
+        ));
+    }
+    let mut descriptors = Vec::new();
+    find_project_descriptors(root, 0, &mut descriptors)?;
+    match descriptors.len() {
+        1 => {
+            let descriptor = descriptors.remove(0);
+            import_project(&descriptor)?;
+            Ok(descriptor)
+        }
+        0 => Err("Selected directory contains no .kproject descriptor".into()),
+        count => Err(format!(
+            "Selected directory contains {count} .kproject descriptors; choose a narrower project folder"
+        )),
+    }
+}
+
 pub fn clone_project(
     repository: &str,
     parent: &Path,
@@ -1515,22 +1537,17 @@ fn compile_project_logic(project: &Path, installation: &EngineInstallation) -> R
     Ok(())
 }
 
-/// Builds attached visual logic, then launches the selected engine's player
-/// after KairoHub's structural inspection and KairoPlayer's runtime boundary.
-/// Command arguments are passed directly, never through a host shell.
-pub fn launch_player_with(
+fn resolve_project_runtime(
     project: &Path,
+    health: &ProjectHealth,
     installation: &EngineInstallation,
-) -> Result<Child, String> {
-    let health = validate_player_operation(project, installation)?;
-    compile_project_logic(project, installation)?;
-
+) -> Result<PathBuf, String> {
     let descriptor = health
         .descriptor
         .as_ref()
         .ok_or_else(|| "Project descriptor is unavailable after validation".to_string())?;
 
-    let executable = if let Some(relative) = descriptor.runtime_executable.as_deref() {
+    if let Some(relative) = descriptor.runtime_executable.as_deref() {
         let project_root = project
             .parent()
             .ok_or_else(|| "Project descriptor has no parent directory".to_string())?;
@@ -1549,10 +1566,28 @@ pub fn launch_player_with(
                 resolved.display()
             ));
         }
-        resolved
-    } else {
-        installation.player.clone()
-    };
+        return Ok(resolved);
+    }
+
+    if !installation.player_available || !installation.player.is_file() {
+        return Err(format!(
+            "Selected KairoPlayer build is missing: {}",
+            installation.player.display()
+        ));
+    }
+    Ok(installation.player.clone())
+}
+
+/// Builds attached visual logic, then launches the exact runtime selected by
+/// the project descriptor. Projects without a custom runtime fall back to the
+/// selected Kairo installation's generic KairoPlayer.
+pub fn launch_player_with(
+    project: &Path,
+    installation: &EngineInstallation,
+) -> Result<Child, String> {
+    let health = validate_player_operation(project, installation)?;
+    compile_project_logic(project, installation)?;
+    let executable = resolve_project_runtime(project, &health, installation)?;
 
     Command::new(&executable)
         .arg(project)
@@ -1598,26 +1633,35 @@ pub fn package_project_with(
         .clone();
 
     compile_project_logic(project, installation)?;
-    let mut command = Command::new(&installation.player);
-    command.arg(project).arg("--package").arg(&profile.name);
+    let executable = resolve_project_runtime(project, &health, installation)?;
+    let mut command = Command::new(&executable);
+    command
+        .arg(project)
+        .arg("--package")
+        .arg(&profile.name)
+        .current_dir(
+            project
+                .parent()
+                .ok_or_else(|| "Project descriptor has no parent directory".to_string())?,
+        );
     if replace {
         command.arg("--replace");
     }
     let output = command
         .output()
-        .map_err(|error| format!("Cannot run KairoPlayer package operation: {error}"))?;
+        .map_err(|error| format!("Cannot run Project runtime package operation: {error}"))?;
     if !output.status.success() {
         let stderr = bounded_process_diagnostics(&output.stderr);
         let stdout = bounded_process_diagnostics(&output.stdout);
         let diagnostics = if !stderr.is_empty() { stderr } else { stdout };
         return Err(if diagnostics.is_empty() {
             format!(
-                "KairoPlayer package operation failed with status {}",
+                "Project runtime package operation failed with status {}",
                 output.status
             )
         } else {
             format!(
-                "KairoPlayer package operation failed with status {}: {diagnostics}",
+                "Project runtime package operation failed with status {}: {diagnostics}",
                 output.status
             )
         });
