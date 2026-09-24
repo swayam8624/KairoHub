@@ -204,10 +204,9 @@ fn import_external_gltf_project(
             .value
             .lock()
             .map_err(|_| "KairoHub state lock was poisoned".to_string())?;
-        let root = value
-            .selected_engine
-            .as_ref()
-            .ok_or_else(|| "Select a Kairo engine installation before importing external content".to_string())?;
+        let root = value.selected_engine.as_ref().ok_or_else(|| {
+            "Select a Kairo engine installation before importing external content".to_string()
+        })?;
         project::inspect_engine(root)?.version
     };
     let path = project::clone_external_gltf_project(
