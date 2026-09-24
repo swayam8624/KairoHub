@@ -1217,6 +1217,20 @@ fn generate_external_gltf_project(
     let generated_root = root.join(".kairo");
     let scenes_dir = generated_root.join("Scenes");
     let config_dir = generated_root.join("Config");
+    let project = root.join("KairoImported.kproject");
+    let generated_files = [
+        project.clone(),
+        generated_root.join("Assets.kassets"),
+        scenes_dir.join("Imported.kscene"),
+        config_dir.join("Input.kinput"),
+    ];
+    if let Some(existing) = generated_files.iter().find(|path| path.exists()) {
+        return Err(format!(
+            "External import would overwrite an existing generated file: {}",
+            existing.display()
+        ));
+    }
+
     fs::create_dir_all(&scenes_dir).map_err(|error| error.to_string())?;
     fs::create_dir_all(&config_dir).map_err(|error| error.to_string())?;
 
@@ -1264,10 +1278,6 @@ end\n"
         quote(display_name.trim()),
         quote(engine_version.trim())
     );
-    let project = root.join("KairoImported.kproject");
-    if project.exists() {
-        return Err("External repository already contains KairoImported.kproject; refusing to overwrite it".into());
-    }
     write_atomic(&project, &descriptor)?;
 
     let health = import_project(&project)?;
@@ -1288,6 +1298,11 @@ pub fn import_external_gltf_directory(
 ) -> Result<PathBuf, String> {
     if !root.is_dir() {
         return Err(format!("External import root is not a directory: {}", root.display()));
+    }
+    let metadata = fs::symlink_metadata(root)
+        .map_err(|error| format!("Cannot inspect external import root: {error}"))?;
+    if metadata.file_type().is_symlink() {
+        return Err("External import root cannot be a symbolic link".into());
     }
     let scene = resolve_external_scene(root, entry_scene)?;
     generate_external_gltf_project(root, &scene, display_name, engine_version)
@@ -1809,6 +1824,20 @@ mod tests {
         assert!(scene.contains("scene-instance 90000000-0000-4000-8000-000000000001"));
         assert!(scene.contains("camera perspective"));
         assert!(scene.contains("light directional"));
+
+        fs::write(root.join(".kairo/Assets.kassets"), "sentinel").unwrap();
+        let error = generate_external_gltf_project(
+            &root,
+            Path::new("content/world.glb"),
+            "External Game",
+            "0.1.0",
+        )
+        .unwrap_err();
+        assert!(error.contains("overwrite"));
+        assert_eq!(
+            fs::read_to_string(root.join(".kairo/Assets.kassets")).unwrap(),
+            "sentinel"
+        );
     }
 
     #[test]
