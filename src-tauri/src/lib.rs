@@ -267,12 +267,25 @@ fn link_source_game(
 }
 
 #[tauri::command]
+fn register_godot_runtime(
+    executable: PathBuf,
+    state: State<'_, ManagedHubState>,
+) -> Result<HubState, String> {
+    let validated = source_game::validate_godot_binary(&executable)?;
+    let mut value = state.value.lock()
+        .map_err(|_| "KairoHub state lock was poisoned".to_string())?;
+    value.godot_executable = Some(validated);
+    save_state(&state.data_file, &value)?;
+    Ok(value.clone())
+}
+
+#[tauri::command]
 async fn launch_source_game(
     root: PathBuf,
     edit: bool,
     state: State<'_, ManagedHubState>,
 ) -> Result<u32, String> {
-    {
+    let chosen_runtime = {
         let value = state.value.lock()
             .map_err(|_| "KairoHub state lock was poisoned".to_string())?;
         let canonical = std::fs::canonicalize(&root)
@@ -280,9 +293,11 @@ async fn launch_source_game(
         if !value.source_games.contains(&canonical) {
             return Err("Link the source game in Hub before launching it".into());
         }
-    }
+        value.godot_executable.clone()
+    };
     tauri::async_runtime::spawn_blocking(move || {
-        let mut child = source_game::launch_source_game(&root, edit)?;
+        let mut child = source_game::launch_source_game_with(
+            &root, edit, chosen_runtime.as_deref())?;
         let pid = child.id();
         // A child which exits during startup was never a usable play session.
         std::thread::sleep(Duration::from_millis(450));
@@ -438,6 +453,7 @@ pub fn run() {
             inspect_source_game,
             inspect_source_game_graph,
             link_source_game,
+            register_godot_runtime,
             launch_source_game,
             reconstruct_source_game,
             launch_editor,
