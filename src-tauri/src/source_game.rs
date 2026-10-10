@@ -243,8 +243,11 @@ pub fn inspect_source_game(input: &Path) -> Result<SourceGameInspection, String>
                 if let Ok(relative) = path.strip_prefix(&root) {
                     let portable = relative.components().all(|part| match part {
                         std::path::Component::Normal(value) => value.to_str().is_some_and(
-                            |s| !s.is_empty() && !s.ends_with(['.', ' '])
-                                && !s.contains([':', '\\', '"', '<', '>', '|', '?', '*'])),
+                            |s| !s.is_empty()
+                                && !s.ends_with('.')
+                                && !s.ends_with(' ')
+                                && !s.chars().any(|ch| matches!(ch,
+                                    ':' | '\\' | '"' | '<' | '>' | '|' | '?' | '*'))),
                         _ => false,
                     });
                     if portable {
