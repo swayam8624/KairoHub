@@ -1958,18 +1958,15 @@ mod tests {
         let game_root = project.parent().unwrap();
         fs::create_dir_all(game_root.join("Build")).unwrap();
         let exe = game_root.join("Build/GamePlayer");
-        // Test a process that records which descriptor was supplied and exits.
-        // This proves the prebuilt path does not call CMake, a shell wrapper
-        // or Kairo's native compiler and uses an exact argument contract.
-        fs::write(&exe, "#!/bin/sh\nprintf '%s' \"$1\" > \"$2\"\n").unwrap();
+        // This process checks the descriptor argv contract and exits.
+        // It proves direct Play needs no installed Kairo compiler or editor.
+        fs::write(&exe, "#!/bin/sh\ntest -f \"$1\"\n").unwrap();
         let mut perms = fs::metadata(&exe).unwrap().permissions();
         perms.set_mode(0o700);
         fs::set_permissions(&exe, perms).unwrap();
         let source = fs::read_to_string(&project).unwrap();
         fs::write(&project, format!("{source}play-executable \"Build/GamePlayer\"\n")).unwrap();
-        // The CLI contract accepts the project only. A trivial executable
-        // exits with status 0; no GUI window is necessary for the unit gate.
-        fs::write(&exe, "#!/bin/sh\ntest -f \"$1\"\n").unwrap();
+        // A successful process exit is enough for this headless unit gate.
         let mut process = launch_prebuilt_game(&project).unwrap();
         assert!(process.wait().unwrap().success());
     }
