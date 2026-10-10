@@ -312,14 +312,21 @@ function renderProjects(): void {
     if (!health) return `<article class="project-row loading"><div class="project-glyph">…</div><div><strong>Inspecting project</strong><small>${escapeHtml(path)}</small></div></article>`;
     const valid = health.errors.length === 0;
     const favorite = state.favorites.includes(path);
-    const message = valid ? (health.warnings[0] ?? "Ready to open") : health.errors[0];
+    const selectedEngine = engines.find((engine) => engine.root === state.selectedEngine);
+    const canRun = valid && Boolean(selectedEngine?.projectCompilerAvailable && selectedEngine.playerAvailable);
+    const runMessage = !state.selectedEngine
+      ? "Choose your Kairo installation below to enable one-click Run"
+      : "The selected Kairo engine needs both KairoProjectCompiler and KairoPlayer built";
+    const message = !valid ? health.errors[0]
+      : canRun ? (health.warnings[0] ?? "Ready to play")
+      : runMessage;
     return `<article class="project-row" data-path="${escapeHtml(path)}">
       <div class="project-glyph">${escapeHtml(projectTitle(path, health).slice(0, 1).toUpperCase())}</div>
       <div class="project-info"><div><strong>${escapeHtml(projectTitle(path, health))}</strong><span class="health ${valid ? "ready" : "warning"}">${valid ? "Ready" : "Repair"}</span></div><small>${escapeHtml(path)}</small><p>${escapeHtml(message)}</p></div>
       <button class="icon-button favorite ${favorite ? "selected" : ""}" type="button" data-action="favorite" aria-label="${favorite ? "Remove from favorites" : "Add to favorites"}">★</button>
       <button class="button secondary" type="button" data-action="${valid ? "recovery" : "repair"}">${valid ? "Recovery" : "Repair"}</button>
       <button class="button secondary" type="button" data-action="package" ${valid ? "" : "disabled"}>Package</button>
-      <button class="button primary" type="button" data-action="run" ${valid ? "" : "disabled"}>▶ Run game</button>
+      <button class="button primary" type="button" data-action="run" title="${escapeHtml(canRun ? "Launch this game without entering the editor" : runMessage)}" ${canRun ? "" : "disabled"}>▶ Run game</button>
       <button class="button secondary" type="button" data-action="open" ${valid ? "" : "disabled"}>Edit project</button>
     </article>`;
   }).join("");
@@ -413,8 +420,8 @@ function renderEngines(): void {
   const list = document.querySelector<HTMLDivElement>("#engine-list")!;
   list.innerHTML = engines.length ? engines.map((engine) => `<button class="engine-row ${engine.root === state.selectedEngine ? "selected" : ""}" data-engine="${escapeHtml(engine.root)}" type="button"><span><strong>Kairo ${escapeHtml(engine.version)}</strong><small>${escapeHtml(engine.root)}</small></span><em>${engine.editorAvailable && engine.projectCompilerAvailable && engine.playerAvailable ? "Ready" : "Build incomplete"}</em></button>`).join("")
     : `<div class="compact-empty">No Kairo installations registered.</div>`;
+  renderProjects();
 }
-
 async function refreshHealth(): Promise<void> {
   healthByPath = new Map();
   renderProjects();

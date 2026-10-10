@@ -36,26 +36,46 @@ fn save_state(path: &Path, state: &HubState) -> Result<(), String> {
     Ok(())
 }
 
+/// Build a bounded, deterministic list of possible engine checkout locations.
+/// A packaged Hub can be launched outside the shell working directory, so
+/// probe direct siblings of the current executable as well as CWD and its
+/// ancestors. Never perform recursive filesystem searches of home directories.
+fn nearby_engine_candidates(path: &Path, output: &mut Vec<PathBuf>) {
+    for ancestor in path.ancestors().take(7) {
+        output.push(ancestor.to_path_buf());
+        output.push(ancestor.join("KairoGameEngine"));
+    }
+}
+
 fn register_discovered_engine(state: &mut HubState) {
     let mut candidates = Vec::new();
     if let Some(root) = std::env::var_os("KAIRO_ENGINE_ROOT") {
         candidates.push(PathBuf::from(root));
     }
     if let Ok(current) = std::env::current_dir() {
-        candidates.push(current.clone());
-        if let Some(parent) = current.parent() {
-            candidates.push(parent.to_path_buf());
+        nearby_engine_candidates(&current, &mut candidates);
+    }
+    if let Ok(executable) = std::env::current_exe() {
+        if let Some(directory) = executable.parent() {
+            nearby_engine_candidates(directory, &mut candidates);
         }
     }
-    if let Some(root) = candidates
-        .into_iter()
-        .find(|candidate| project::inspect_engine(candidate).is_ok())
-    {
+    let root = candidates.into_iter()
+        .find(|candidate| project::inspect_engine(candidate).is_ok());
+    if let Some(root) = root {
         if !state.engine_roots.contains(&root) {
             state.engine_roots.push(root.clone());
         }
         if state.selected_engine.is_none() {
-            state.selected_engine = Some(root);
+            state.selected_engine = Some(root.clone());
+        }
+        if state.recent_projects.is_empty() {
+            // This is a real, ordinary KairoPlayer scene with keyboard/gamepad
+            // input, not a decorative welcome screen or sample-only executable.
+            let sample = root.join("Samples/PlayableVerticalSlice/Project.kproject");
+            if project::inspect_project(&sample).is_valid() {
+                state.remember(sample);
+            }
         }
     }
 }
@@ -424,6 +444,22 @@ async fn package_project(
     })
     .await
     .map_err(|error| format!("KairoHub package task failed: {error}"))?
+}
+
+#[cfg(test)]
+mod discovery_tests {
+    use super::*;
+
+    #[test]
+    fn engine_discovery_checks_checkout_and_sibling_without_recursive_scan() {
+        let mut candidates = Vec::new();
+        nearby_engine_candidates(Path::new("/Users/example/Kairo/KairoHub"), &mut candidates);
+        assert!(candidates.contains(
+            &PathBuf::from("/Users/example/Kairo/KairoGameEngine")));
+        assert!(candidates.contains(
+            &PathBuf::from("/Users/example/Kairo/KairoHub")));
+        assert!(candidates.len() <= 14);
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

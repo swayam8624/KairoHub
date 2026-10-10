@@ -25,6 +25,29 @@ Unreal Blueprints, physics logic, menus, collisions or commercial executable
 binaries. A 2D Godot game without glTF/GLB cannot yet become native Kairo
 gameplay; inspection reports that explicitly.
 
+## First launch: game selection and one-click Run
+
+KairoHub is the **entry application**. Starting the installed KairoHub desktop
+app opens a project/game chooser rather than starting an empty editor.
+The Hub checks direct directories near its executable/current working directory
+for a validated KairoGameEngine checkout and honors `KAIRO_ENGINE_ROOT`.
+It does not recursively search arbitrary private directories.
+
+When a built KairoGameEngine checkout is discoverable and no projects are
+registered yet, Hub offers the real
+`Samples/PlayableVerticalSlice/Project.kproject` as a playable starting point.
+The **Run game** button is available only when the selected engine includes
+working KairoProjectCompiler and KairoPlayer binaries. Otherwise the project
+row explains what is missing, and the user can choose a built installation
+with the engine selector at the bottom left. **Edit project** opens authoring,
+while **Run game** plays without ever opening the editor.
+
+The Hub desktop package is a launcher, **not** a self-contained Kairo engine:
+the build of KairoGameEngine still needs to be installed or bundled separately.
+Linking a Godot/Unity/Unreal source folder is supported in the separate
+**Games from other engines** section with explicit original-engine and
+conversion boundaries.
+
 ## Development
 
 ```bash
