@@ -130,12 +130,12 @@ fn resolve_godot_scene_uid(root: &Path, uid: &str) -> Result<String, String> {
                 continue;
             }
             // Delimit UID token to avoid accepting a prefix of another UID.
-            let expected = format!("uid=\\\"{uid}\\\"");
+            let expected = format!("uid=\"{uid}\"");
             if !header.split_ascii_whitespace().any(|field| field == expected || field == format!("{expected}]")) {
                 continue;
             }
             let relative = path.strip_prefix(root).map_err(|e| e.to_string())?;
-            let portable = format!("res://{}", relative.to_string_lossy().replace('\\\\', "/"));
+            let portable = format!("res://{}", relative.to_string_lossy().replace('\\', "/"));
             if match_path.replace(portable).is_some() {
                 return Err(format!("Godot scene UID {uid} is ambiguous between multiple scene files"));
             }
