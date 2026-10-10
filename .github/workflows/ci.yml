@@ -46,3 +46,32 @@ jobs:
         env:
           RUSTFLAGS: -Dwarnings
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+
+      - name: Inspect an actual open-source Godot game (fixed upstream revision)
+        shell: bash
+        run: |
+          # Source: godotengine/godot-demo-projects, 2d/dodge_the_creeps (MIT).
+          # Fetch the real game with its scenes/scripts/assets but no whole-repo
+          # checkout. Test the intake contract, NOT a native Kairo gameplay port.
+          git clone --filter=blob:none --sparse --no-checkout \
+            https://github.com/godotengine/godot-demo-projects.git "$RUNNER_TEMP/kairo-godot-demo"
+          git -C "$RUNNER_TEMP/kairo-godot-demo" sparse-checkout set 2d/dodge_the_creeps
+          git -C "$RUNNER_TEMP/kairo-godot-demo" fetch --no-tags origin \
+            b761b4cd5718a7118f2c95eb55f181d0a5f004f1
+          git -C "$RUNNER_TEMP/kairo-godot-demo" checkout --detach \
+            b761b4cd5718a7118f2c95eb55f181d0a5f004f1
+          cargo run --quiet --locked --manifest-path src-tauri/Cargo.toml \
+            --bin kairo-hub-inspect-game -- \
+            "$RUNNER_TEMP/kairo-godot-demo/2d/dodge_the_creeps" > "$RUNNER_TEMP/game-report.json"
+          python3 - "$RUNNER_TEMP/game-report.json" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding="utf-8") as file:
+              report = json.load(file)
+          assert report["engine"] == "Godot", report
+          assert report["displayName"] == "Dodge the Creeps", report
+          assert report["mainScene"] == "res://main.tscn", report
+          assert report["sceneFiles"] >= 4, report
+          assert report["scriptFiles"] >= 4, report
+          assert report["nativeSceneCandidate"] is None, report
+          print("REAL GAME INTAKE PASSED: Godot source inspected; native GDScript migration is not claimed")
+          PY
