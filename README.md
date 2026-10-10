@@ -25,6 +25,27 @@ Unreal Blueprints, physics logic, menus, collisions or commercial executable
 binaries. A 2D Godot game without glTF/GLB cannot yet become native Kairo
 gameplay; inspection reports that explicitly.
 
+## Open Kairo: choose a game, then Play
+
+The desktop application's product name is **Kairo**. Opening it displays
+the KairoHub game library instead of a source-code editor.
+
+- **Play** a ready native Kairo project: Hub validates and compiles authored
+  project logic and launches KairoPlayer with startup-failure reporting.
+- **Play** a linked Godot game: the original Godot runtime runs the game.
+  On first use, the Play action offers an executable chooser if needed.
+- **Edit** is separate from Play for both native projects and Godot sources.
+- **Import 3D scene**: select one glTF/GLB file from the available source
+  scenes; Hub creates a Kairo-native scene wrapper without overwriting
+  existing work. Gameplay scripts, 2D physics, and menus are not translated.
+
+Godot 4 project files with uid:// startup references are resolved from safe,
+bounded project-owned .tscn scene headers. Missing or ambiguous UIDs fail
+closed rather than launching a different scene.
+
+The desktop-macos.yml workflow packages an **unsigned Kairo.app** for
+internal testing; this is not a notarized release installer.
+
 ## Development
 
 ```bash
