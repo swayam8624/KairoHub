@@ -49,7 +49,11 @@ pub struct GodotSceneGraph {
 /// accepting eval expressions. Missing attributes are represented as None.
 fn attribute(line: &str, key: &str) -> Option<String> {
     let search = format!("{key}=\"");
-    let start = line.find(&search)? + search.len();
+    // Exact header key boundary: id=\" must NOT match inside uid=\".
+    let start = line.match_indices(&search)
+        .find(|(offset, _)| *offset == 0 ||
+            line.as_bytes()[offset - 1].is_ascii_whitespace())
+        .map(|(offset, _)| offset + search.len())?;
     let mut value = String::new();
     let mut escaped = false;
     for ch in line[start..].chars() {
@@ -177,6 +181,13 @@ pub fn inspect_godot_graph(root: &Path) -> Result<GodotSceneGraph, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn external_resource_id_cannot_be_confused_with_uid() {
+        let header = "[ext_resource type=\"Script\" uid=\"uid://abcd\" path=\"res://player.gd\" id=\"7_foo\"]";
+        assert_eq!(attribute(header, "uid").as_deref(), Some("uid://abcd"));
+        assert_eq!(attribute(header, "id").as_deref(), Some("7_foo"));
+    }
 
     #[test]
     fn parses_nodes_instances_scripts_and_signals_without_executing_them() {
