@@ -63,6 +63,27 @@ type SourceGameGraph = {
   unsupportedBehaviors: string[];
 };
 
+type GameMigrationIssue = {
+  code: string;
+  severity: "blocker" | "error" | "warning";
+  source: string;
+  explanation: string;
+  suggestedAction: string;
+};
+
+type GodotMigrationPlan = {
+  schema: string;
+  engine: string;
+  title: string;
+  mainScene: string;
+  sourceObjects: {sourcePath: string; sourceType: string; authoredScript: string | null; packedScene: string | null}[];
+  sourceAssets: {resourceId: string; resourceType: string; sourcePath: string; exists: boolean}[];
+  signalCount: number;
+  nativeGameplayReady: boolean;
+  originalRuntimeAvailable: boolean;
+  issues: GameMigrationIssue[];
+};
+
 type SourceGameInspection = {
   root: string;
   engine: "Godot" | "Unity" | "Unreal";
@@ -402,6 +423,32 @@ async function showSourceInspection(info: SourceGameInspection): Promise<void> {
   } catch (error) {
     document.querySelector("#game-inspection-details")!.insertAdjacentHTML("beforeend",
       '<p>Scene graph detail unavailable: ' + escapeHtml(String(error)) + '</p>');
+  }
+  try {
+    const plan = await invoke<GodotMigrationPlan>("plan_source_game_migration", {root: info.root});
+    const blocking = plan.issues.filter((entry) => entry.severity === "blocker").length;
+    const missing = plan.sourceAssets.filter((asset) => !asset.exists).length;
+    const sample = plan.issues.slice(0, 12);
+    const items = sample.map((entry) =>
+      '<li><strong>' + escapeHtml(entry.code.replace(/_/g, " ")) + '</strong> — ' +
+      escapeHtml(entry.explanation) + '<small>' +
+      escapeHtml(entry.source + " · " + entry.suggestedAction) + '</small></li>').join("");
+    const heading = '<p><strong>Game reconstruction readiness:</strong> ' +
+      plan.sourceObjects.length + ' scene objects, ' + plan.sourceAssets.length +
+      ' referenced resources (' + missing + ' unavailable), ' + plan.signalCount +
+      ' signals, ' + blocking + ' native-play blockers. ' +
+      (plan.nativeGameplayReady ? "Native gameplay certified" :
+        "Original gameplay only; a Kairo-native port is not yet verified.") + '</p>';
+    document.querySelector("#game-inspection-details")!.insertAdjacentHTML("beforeend",
+      heading + '<div class="migration-plan"><strong>What needs converting</strong><ol>' +
+      items + '</ol>' +
+      (plan.issues.length > sample.length ?
+        '<p>+' + (plan.issues.length - sample.length) +
+        ' additional migration findings. Export the complete JSON using the inspector CLI.</p>' : '') +
+      '</div>');
+  } catch (error) {
+    document.querySelector("#game-inspection-details")!.insertAdjacentHTML("beforeend",
+      '<p>Migration assessment unavailable: ' + escapeHtml(String(error)) + '</p>');
   }
 }
 
