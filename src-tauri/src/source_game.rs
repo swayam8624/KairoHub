@@ -79,9 +79,79 @@ fn godot_setting(content: &str, section: &str, key: &str) -> Option<String> {
     None
 }
 
+/// Resolve Godot 4 UID-based startup references from text-scene headers.
+////
+//// We intentionally do not parse Godot's generated binary UID cache. Instead,
+//// search project-owned .tscn headers with strict resource limits. Returning
+//// an ambiguous UID is worse than refusing to play the wrong scene.
+fn resolve_godot_scene_uid(root: &Path, uid: &str) -> Result<String, String> {
+    if !uid.starts_with("uid://")
+        || uid.len() > 160
+        || !uid[6..].chars().all(|c| c.is_ascii_alphanumeric())
+    {
+        return Err("Godot startup UID has an unsupported format".into());
+    }
+    let mut pending = vec![(root.to_path_buf(), 0usize)];
+    let mut visited = 0usize;
+    let mut match_path: Option<String> = None;
+    while let Some((directory, depth)) = pending.pop() {
+        for entry in fs::read_dir(directory).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            visited += 1;
+            if visited > MAX_SCAN_ENTRIES {
+                return Err("Godot UID lookup exceeded the bounded project scan".into());
+            }
+            let path = entry.path();
+            let meta = fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
+            if meta.file_type().is_symlink() {
+                continue;
+            }
+            if meta.is_dir() {
+                let name = entry.file_name();
+                if matches!(name.to_str().unwrap_or(""), ".git" | ".godot" | ".kairo" | "node_modules") {
+                    continue;
+                }
+                if depth < MAX_SCAN_DEPTH {
+                    pending.push((path, depth + 1));
+                }
+                continue;
+            }
+            if !meta.is_file() || path.extension() != Some(OsStr::new("tscn")) || meta.len() > 8 * 1024 * 1024 {
+                continue;
+            }
+            // Only the scene header may declare the scene's UID.
+            let mut file = fs::File::open(&path).map_err(|e| e.to_string())?;
+            let mut prefix = [0u8; 4096];
+            use std::io::Read;
+            let bytes = file.read(&mut prefix).map_err(|e| e.to_string())?;
+            let text = String::from_utf8_lossy(&prefix[..bytes]);
+            let header = text.lines().find(|line| !line.trim().is_empty()).unwrap_or("");
+            if !header.starts_with("[gd_scene ") || !header.ends_with(']') {
+                continue;
+            }
+            // Delimit UID token to avoid accepting a prefix of another UID.
+            let expected = format!("uid=\\\"{uid}\\\"");
+            if !header.split_ascii_whitespace().any(|field| field == expected || field == format!("{expected}]")) {
+                continue;
+            }
+            let relative = path.strip_prefix(root).map_err(|e| e.to_string())?;
+            let portable = format!("res://{}", relative.to_string_lossy().replace('\\\\', "/"));
+            if match_path.replace(portable).is_some() {
+                return Err(format!("Godot scene UID {uid} is ambiguous between multiple scene files"));
+            }
+        }
+    }
+    match_path.ok_or_else(|| format!("Godot scene UID {uid} was not found in project-owned text scenes"))
+}
+
 fn inspect_godot_scene(root: &Path, scene: &str) -> Result<String, String> {
-    let path = scene.strip_prefix("res://").ok_or(
-        "Godot main_scene is not a res:// path; UID-based entry resolution is not supported yet",
+    let owned_scene = if scene.starts_with("uid://") {
+        resolve_godot_scene_uid(root, scene)?
+    } else {
+        scene.to_owned()
+    };
+    let path = owned_scene.strip_prefix("res://").ok_or(
+        "Godot main_scene must be a project-relative res:// path or resolvable uid:// text scene",
     )?;
     if path.is_empty() || path.contains('\\') || path.contains('\0') {
         return Err("Godot startup scene must have a safe non-empty res:// path".into());
@@ -101,7 +171,7 @@ fn inspect_godot_scene(root: &Path, scene: &str) -> Result<String, String> {
     if !canonical.starts_with(root) {
         return Err("Godot startup scene escapes the source-game directory".into());
     }
-    Ok(scene.to_owned())
+    Ok(owned_scene)
 }
 
 fn executable_at(path: &Path) -> bool {
