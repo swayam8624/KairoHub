@@ -37,6 +37,7 @@ type ProjectHealth = {
 
 type HubState = {
   recentProjects: string[];
+  sourceGames: string[];
   favorites: string[];
   engineRoots: string[];
   selectedEngine: string | null;
@@ -51,6 +52,20 @@ type EngineInstallation = {
   projectCompilerAvailable: boolean;
   player: string;
   playerAvailable: boolean;
+};
+
+type SourceGameInspection = {
+  root: string;
+  engine: "Godot" | "Unity" | "Unreal";
+  displayName: string;
+  mainScene: string | null;
+  sceneFiles: number;
+  scriptFiles: number;
+  mediaFiles: number;
+  scannedFiles: number;
+  nativeSceneCandidate: string | null;
+  originalRuntimeAvailable: boolean;
+  notes: string[];
 };
 
 type RecoverySnapshotInfo = {
@@ -81,6 +96,7 @@ app.innerHTML = `
         <div class="header-actions">
           <button id="clone-button" class="button secondary" type="button">Clone Kairo</button>
           <button id="external-import-button" class="button secondary" type="button">Import glTF repo</button>
+          <button id="source-game-button" class="button secondary" type="button">Add existing game</button>
           <button id="import-folder-button" class="button secondary" type="button">Import folder</button>
           <button id="import-button" class="button secondary" type="button">Import .kproject</button>
           <button id="create-button" class="button primary" type="button">New project</button>
@@ -92,8 +108,12 @@ app.innerHTML = `
         <div><span id="attention-count">0</span><small>Need attention</small></div>
       </section>
       <section class="project-section">
-        <div class="section-heading"><h2>Recent</h2><input id="project-filter" type="search" placeholder="Filter projects" aria-label="Filter projects" /></div>
+        <div class="section-heading"><h2>Kairo projects</h2><input id="project-filter" type="search" placeholder="Filter games" aria-label="Filter games" /></div>
         <div id="project-list" class="project-list" aria-live="polite"></div>
+      </section>
+      <section class="project-section source-section" aria-label="Linked original games">
+        <div class="section-heading"><h2>Games from other engines</h2><small>Play in original engine or convert supported 3D scenes</small></div>
+        <div id="source-game-list" class="project-list" aria-live="polite"></div>
       </section>
     </main>
   </div>
@@ -134,6 +154,14 @@ app.innerHTML = `
       <div class="dialog-actions"><button value="cancel" class="button secondary">Cancel</button><button id="confirm-external-import" value="default" class="button primary">Clone and convert</button></div>
     </form>
   </dialog>
+  <dialog id="game-inspection-dialog" class="wide-dialog">
+    <div class="dialog-form">
+      <div><p class="eyebrow">Compatibility report</p><h2 id="game-inspection-title">Game analysis</h2></div>
+      <div id="game-inspection-details" class="game-inspection-details"></div>
+      <p class="field-note">Run original is not a Kairo-native conversion. Native scene import preserves only portable 3D content, not other engines’ gameplay scripts.</p>
+      <div class="dialog-actions"><button id="close-game-inspection" class="button primary" type="button">Done</button></div>
+    </div>
+  </dialog>
   <dialog id="engine-dialog">
     <div class="dialog-form">
       <div><p class="eyebrow">Toolchain</p><h2>Kairo installations</h2></div>
@@ -163,6 +191,8 @@ app.innerHTML = `
 `;
 
 const projectList = document.querySelector<HTMLDivElement>("#project-list")!;
+const sourceGameList = document.querySelector<HTMLDivElement>("#source-game-list")!;
+const gameInspectionDialog = document.querySelector<HTMLDialogElement>("#game-inspection-dialog")!;
 const projectFilter = document.querySelector<HTMLInputElement>("#project-filter")!;
 const importDialog = document.querySelector<HTMLDialogElement>("#import-dialog")!;
 const createDialog = document.querySelector<HTMLDialogElement>("#create-dialog")!;
@@ -174,7 +204,9 @@ const packageDialog = document.querySelector<HTMLDialogElement>("#package-dialog
 const packageProfile = document.querySelector<HTMLSelectElement>("#package-profile")!;
 const packageDestination = document.querySelector<HTMLParagraphElement>("#package-destination")!;
 const toast = document.querySelector<HTMLDivElement>("#toast")!;
-let state: HubState = { recentProjects: [], favorites: [], engineRoots: [], selectedEngine: null };
+let state: HubState = { recentProjects: [], sourceGames: [], favorites: [], engineRoots: [], selectedEngine: null };
+let sourceGamesByRoot = new Map<string, SourceGameInspection>();
+let sourceGameErrors = new Map<string, string>();
 let healthByPath = new Map<string, ProjectHealth>();
 let engines: EngineInstallation[] = [];
 let recoveryProject = "";
@@ -278,8 +310,8 @@ function renderProjects(): void {
       <button class="icon-button favorite ${favorite ? "selected" : ""}" type="button" data-action="favorite" aria-label="${favorite ? "Remove from favorites" : "Add to favorites"}">★</button>
       <button class="button secondary" type="button" data-action="${valid ? "recovery" : "repair"}">${valid ? "Recovery" : "Repair"}</button>
       <button class="button secondary" type="button" data-action="package" ${valid ? "" : "disabled"}>Package</button>
-      <button class="button secondary" type="button" data-action="run" ${valid ? "" : "disabled"}>Run</button>
-      <button class="button primary" type="button" data-action="open" ${valid ? "" : "disabled"}>Open editor</button>
+      <button class="button primary" type="button" data-action="run" ${valid ? "" : "disabled"}>▶ Run game</button>
+      <button class="button secondary" type="button" data-action="open" ${valid ? "" : "disabled"}>Edit project</button>
     </article>`;
   }).join("");
 }
@@ -329,7 +361,7 @@ document.querySelector("#external-import-button")!.addEventListener("click", () 
 document.querySelector("#engine-button")!.addEventListener("click", () => document.querySelector<HTMLDialogElement>("#engine-dialog")!.showModal());
 document.querySelector("#close-engine")!.addEventListener("click", () => document.querySelector<HTMLDialogElement>("#engine-dialog")!.close());
 document.querySelector("#close-recovery")!.addEventListener("click", () => recoveryDialog.close());
-projectFilter.addEventListener("input", renderProjects);
+projectFilter.addEventListener("input", () => { renderProjects(); renderSourceGames(); });
 packageProfile.addEventListener("change", updatePackageDestination);
 
 document.querySelector("#browse-project")!.addEventListener("click", async () => {
