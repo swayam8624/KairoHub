@@ -1936,6 +1936,36 @@ mod tests {
     }
 
     #[test]
+    fn shipped_native_game_can_be_resolved_without_engine_toolchain() {
+        let root = tempfile::tempdir().unwrap();
+        let project = create_project(root.path(), "Shipped", "Shipped Game").unwrap();
+        let game_root = project.parent().unwrap();
+        fs::create_dir_all(game_root.join("Build")).unwrap();
+        fs::write(game_root.join("Build/GamePlayer"), b"built game placeholder").unwrap();
+        let previous = fs::read_to_string(&project).unwrap();
+        fs::write(&project, format!("{previous}play-executable \"Build/GamePlayer\"\n")).unwrap();
+        let (game, descriptor) = resolve_prebuilt_game(&project).unwrap();
+        assert_eq!(game, game_root.join("Build/GamePlayer"));
+        assert_eq!(descriptor, fs::canonicalize(&project).unwrap());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shipped_game_does_not_follow_symlinks_into_foreign_code() {
+        use std::os::unix::fs::symlink;
+        let root = tempfile::tempdir().unwrap();
+        let project = create_project(root.path(), "Shipped", "Shipped Game").unwrap();
+        let game_root = project.parent().unwrap();
+        let external = tempfile::tempdir().unwrap();
+        fs::write(external.path().join("GamePlayer"), b"external").unwrap();
+        symlink(external.path(), game_root.join("External")).unwrap();
+        let old = fs::read_to_string(&project).unwrap();
+        fs::write(&project, format!("{old}play-executable \"External/GamePlayer\"\n")).unwrap();
+        let err = resolve_prebuilt_game(&project).unwrap_err();
+        assert!(err.contains("symbolic links"), "{err}");
+    }
+
+    #[test]
     fn repair_recreates_only_missing_bootstrap_files() {
         let temporary = tempfile::tempdir().unwrap();
         let descriptor = temporary.path().join("Broken.kproject");
