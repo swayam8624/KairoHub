@@ -316,6 +316,70 @@ function renderProjects(): void {
   }).join("");
 }
 
+function renderSourceGames(): void {
+  const query = projectFilter.value.trim().toLocaleLowerCase();
+  const roots = state.sourceGames.filter((root) => {
+    const info = sourceGamesByRoot.get(root);
+    return !query || root.toLocaleLowerCase().includes(query) ||
+      (info?.displayName.toLocaleLowerCase().includes(query) ?? false);
+  });
+  if (!roots.length) {
+    sourceGameList.innerHTML = '<div class="compact-empty">Add a local Godot, Unity or Unreal source-game folder. Your original files are not copied or modified.</div>';
+    return;
+  }
+  sourceGameList.innerHTML = roots.map((root) => {
+    const info = sourceGamesByRoot.get(root);
+    const error = sourceGameErrors.get(root);
+    if (!info) return '<div class="compact-empty">' + escapeHtml(error ?? 'Inspecting ' + root) + '</div>';
+    const canPlay = info.engine === "Godot" && info.originalRuntimeAvailable;
+    const canConvert = Boolean(info.nativeSceneCandidate);
+    const note = info.notes[0] ?? 'Source project detected';
+    const escapedRoot = escapeHtml(root);
+    const disabledPlay = canPlay ? '' : 'disabled title="Godot executable or startup scene unavailable"';
+    const disabledConvert = canConvert ? '' : 'disabled title="No single portable 3D scene"';
+    return '<article class="project-row source-row" data-source-root="' + escapedRoot + '">'
+      + '<div class="project-glyph">' + escapeHtml(info.engine.slice(0, 1)) + '</div>'
+      + '<div class="project-info"><div><strong>' + escapeHtml(info.displayName)
+      + '</strong><span class="health warning">' + escapeHtml(info.engine) + ' source</span></div>'
+      + '<small>' + escapedRoot + '</small><p>' + escapeHtml(note) + '</p></div>'
+      + '<button class="button secondary" type="button" data-source-action="inspect">Inspect</button>'
+      + '<button class="button secondary" type="button" data-source-action="convert" ' + disabledConvert + '>Convert 3D scene</button>'
+      + '<button class="button secondary" type="button" data-source-action="edit" ' + disabledPlay + '>Original editor</button>'
+      + '<button class="button primary" type="button" data-source-action="play" ' + disabledPlay + '>▶ Run original</button>'
+      + '</article>';
+  }).join('');
+}
+
+function showSourceInspection(info: SourceGameInspection): void {
+  document.querySelector("#game-inspection-title")!.textContent = info.displayName;
+  const properties = [
+    ["Engine", info.engine],
+    ["Startup scene", info.mainScene ?? "Not resolved"],
+    ["Scene files", String(info.sceneFiles)],
+    ["Script files", String(info.scriptFiles)],
+    ["Media files", String(info.mediaFiles)],
+    ["Kairo-compatible 3D scene", info.nativeSceneCandidate ?? "None"],
+    ["Original engine executable", info.originalRuntimeAvailable ? "Available" : "Unavailable"],
+  ];
+  document.querySelector("#game-inspection-details")!.innerHTML = properties.map(([key, value]) =>
+    '<div><strong>' + escapeHtml(key) + '</strong><span>' + escapeHtml(value) + '</span></div>'
+  ).join('') + '<p>' + info.notes.map(escapeHtml).join(' · ') + '</p>';
+  gameInspectionDialog.showModal();
+}
+
+async function refreshSourceGames(): Promise<void> {
+  sourceGamesByRoot = new Map();
+  sourceGameErrors = new Map();
+  renderSourceGames();
+  await Promise.all(state.sourceGames.map(async (root) => {
+    try {
+      const inspected = await invoke<SourceGameInspection>("inspect_source_game", { root });
+      sourceGamesByRoot.set(root, inspected);
+    } catch (error) { sourceGameErrors.set(root, String(error)); }
+    renderSourceGames();
+  }));
+}
+
 function renderEngines(): void {
   const selected = engines.find((engine) => engine.root === state.selectedEngine);
   document.querySelector("#engine-name")!.textContent = selected ? `Kairo ${selected.version}` : "Engine not selected";
