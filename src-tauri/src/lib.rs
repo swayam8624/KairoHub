@@ -388,6 +388,23 @@ fn launch_editor(
 }
 
 #[tauri::command]
+async fn launch_prebuilt_game(path: PathBuf) -> Result<u32, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut child = project::launch_prebuilt_game(&path)?;
+        let id = child.id();
+        std::thread::sleep(Duration::from_millis(450));
+        match child.try_wait().map_err(|error| error.to_string())? {
+            Some(status) => Err(format!(
+                "Prebuilt game exited before opening an interactive session: {status}. Check the project's runtime files."
+            )),
+            None => Ok(id),
+        }
+    })
+    .await
+    .map_err(|error| format!("Prebuilt game launch task failed: {error}"))?
+}
+
+#[tauri::command]
 async fn launch_player(path: PathBuf, state: State<'_, ManagedHubState>) -> Result<u32, String> {
     let root = state
         .value
@@ -486,6 +503,7 @@ pub fn run() {
             launch_source_game,
             reconstruct_source_game,
             launch_editor,
+            launch_prebuilt_game,
             launch_player,
             package_project
         ])
