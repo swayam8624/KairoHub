@@ -50,9 +50,9 @@ pub struct GodotSceneGraph {
 fn attribute(line: &str, key: &str) -> Option<String> {
     let search = format!("{key}=\"");
     // Exact header key boundary: id=\" must NOT match inside uid=\".
-    let start = line.match_indices(&search)
-        .find(|(offset, _)| *offset == 0 ||
-            line.as_bytes()[offset - 1].is_ascii_whitespace())
+    let start = line
+        .match_indices(&search)
+        .find(|(offset, _)| *offset == 0 || line.as_bytes()[offset - 1].is_ascii_whitespace())
         .map(|(offset, _)| offset + search.len())?;
     let mut value = String::new();
     let mut escaped = false;
@@ -84,11 +84,15 @@ fn text_scene(root: &Path) -> Result<(String, String), String> {
     if info.engine != "Godot" {
         return Err("Scene graph decoding currently supports Godot .tscn sources only".into());
     }
-    let scene = info.main_scene.ok_or("Source project has no validated main .tscn scene")?;
+    let scene = info
+        .main_scene
+        .ok_or("Source project has no validated main .tscn scene")?;
     if !scene.ends_with(".tscn") {
         return Err("Binary Godot scenes (.scn) are not interpreted; export a .tscn scene".into());
     }
-    let relative = scene.strip_prefix("res://").ok_or("Expected a Godot res:// path")?;
+    let relative = scene
+        .strip_prefix("res://")
+        .ok_or("Expected a Godot res:// path")?;
     let scene_file = info.root.join(relative);
     let meta = fs::symlink_metadata(&scene_file).map_err(|e| e.to_string())?;
     if !meta.is_file() || meta.file_type().is_symlink() {
@@ -115,17 +119,19 @@ pub fn inspect_godot_graph(root: &Path) -> Result<GodotSceneGraph, String> {
     for raw in content.lines() {
         let line = raw.trim();
         if line.starts_with("[node ") && line.ends_with(']') {
-            let name = attribute(line, "name")
-                .ok_or("Godot scene node is missing a name")?;
+            let name = attribute(line, "name").ok_or("Godot scene node is missing a name")?;
             if name.trim().is_empty() {
                 return Err("Godot scene node has an empty name".into());
             }
             let parent = attribute(line, "parent").unwrap_or_default();
-            let node_type = attribute(line, "type")
-                .unwrap_or_else(|| "InstancedScene".into());
+            let node_type = attribute(line, "type").unwrap_or_else(|| "InstancedScene".into());
             let instance_resource = resource_call(line, "ExtResource");
             graph.nodes.push(SourceNode {
-                name, parent, node_type, instance_resource, script_resource: None,
+                name,
+                parent,
+                node_type,
+                instance_resource,
+                script_resource: None,
             });
             active_node = Some(graph.nodes.len() - 1);
         } else if line.starts_with("[ext_resource ") && line.ends_with(']') {
@@ -133,7 +139,11 @@ pub fn inspect_godot_graph(root: &Path) -> Result<GodotSceneGraph, String> {
             let id = attribute(line, "id").unwrap_or_default();
             let resource_type = attribute(line, "type").unwrap_or_default();
             if !id.is_empty() {
-                graph.resources.push(ExternalResource { id, resource_type, path });
+                graph.resources.push(ExternalResource {
+                    id,
+                    resource_type,
+                    path,
+                });
             }
             active_node = None;
         } else if line.starts_with("[connection ") && line.ends_with(']') {
@@ -156,24 +166,37 @@ pub fn inspect_godot_graph(root: &Path) -> Result<GodotSceneGraph, String> {
         return Err("Godot .tscn contains no authorable nodes".into());
     }
 
-    if graph.nodes.iter().any(|node| node.node_type.contains("2D") ||
-        node.node_type == "Control" || node.node_type == "ColorRect" ||
-        node.node_type == "InstancedScene") {
+    if graph.nodes.iter().any(|node| {
+        node.node_type.contains("2D")
+            || node.node_type == "Control"
+            || node.node_type == "ColorRect"
+            || node.node_type == "InstancedScene"
+    }) {
         graph.unsupported_behaviors.push(
             "2D canvas and imported PackedScene instances need a native Kairo 2D authoring/runtime adapter".into());
     }
     if graph.nodes.iter().any(|node| node.node_type == "Timer") {
-        graph.unsupported_behaviors.push(
-            "Godot Timer and scheduling semantics are not converted".into());
+        graph
+            .unsupported_behaviors
+            .push("Godot Timer and scheduling semantics are not converted".into());
     }
-    if graph.resources.iter().any(|resource| resource.resource_type == "Script")
-        || graph.nodes.iter().any(|node| node.script_resource.is_some()) {
-        graph.unsupported_behaviors.push(
-            "GDScript methods and callbacks are not executed or translated".into());
+    if graph
+        .resources
+        .iter()
+        .any(|resource| resource.resource_type == "Script")
+        || graph
+            .nodes
+            .iter()
+            .any(|node| node.script_resource.is_some())
+    {
+        graph
+            .unsupported_behaviors
+            .push("GDScript methods and callbacks are not executed or translated".into());
     }
     if !graph.signals.is_empty() {
-        graph.unsupported_behaviors.push(
-            "Godot signal connections require explicit Kairo event bindings".into());
+        graph
+            .unsupported_behaviors
+            .push("Godot signal connections require explicit Kairo event bindings".into());
     }
     Ok(graph)
 }
@@ -192,9 +215,13 @@ mod tests {
     #[test]
     fn parses_nodes_instances_scripts_and_signals_without_executing_them() {
         let dir = tempfile::tempdir().unwrap();
-        fs::write(dir.path().join("project.godot"),
-            "config_version=5\n[application]\nrun/main_scene=\"res://main.tscn\"\n").unwrap();
-        fs::write(dir.path().join("main.tscn"),
+        fs::write(
+            dir.path().join("project.godot"),
+            "config_version=5\n[application]\nrun/main_scene=\"res://main.tscn\"\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("main.tscn"),
             "[gd_scene format=3]\n\
              [ext_resource type=\"Script\" path=\"res://main.gd\" id=\"1\"]\n\
              [ext_resource type=\"PackedScene\" path=\"res://player.tscn\" id=\"2\"]\n\
@@ -202,14 +229,26 @@ mod tests {
              script = ExtResource(\"1\")\n\
              [node name=\"Player\" parent=\".\" instance=ExtResource(\"2\")]\n\
              [node name=\"Timer\" type=\"Timer\" parent=\".\"]\n\
-             [connection signal=\"timeout\" from=\"Timer\" to=\".\" method=\"spawn\"]\n").unwrap();
+             [connection signal=\"timeout\" from=\"Timer\" to=\".\" method=\"spawn\"]\n",
+        )
+        .unwrap();
         let graph = inspect_godot_graph(dir.path()).unwrap();
         assert_eq!(graph.nodes.len(), 3);
         assert_eq!(graph.resources.len(), 2);
         assert_eq!(graph.signals.len(), 1);
         assert_eq!(graph.nodes[0].script_resource.as_deref(), Some("1"));
         assert_eq!(graph.nodes[1].instance_resource.as_deref(), Some("2"));
-        assert!(graph.unsupported_behaviors.iter().any(|item| item.contains("GDScript")));
-        assert!(graph.unsupported_behaviors.iter().any(|item| item.contains("Timer")));
+        assert!(
+            graph
+                .unsupported_behaviors
+                .iter()
+                .any(|item| item.contains("GDScript"))
+        );
+        assert!(
+            graph
+                .unsupported_behaviors
+                .iter()
+                .any(|item| item.contains("Timer"))
+        );
     }
 }
