@@ -179,13 +179,50 @@ fn validate_relative_path(path: &Path, field: &str) -> Result<(), String> {
     if path.as_os_str().is_empty() || path.is_absolute() {
         return Err(format!("{field} must be a non-empty project-relative path"));
     }
-    if path.components().any(|component| {
-        matches!(
-            component,
-            Component::ParentDir | Component::RootDir | Component::Prefix(_)
-        )
-    }) {
-        return Err(format!("{field} cannot escape the project root"));
+    for component in path.components() {
+        match component {
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                return Err(format!("{field} cannot escape the project root"));
+            }
+            Component::CurDir => {}
+            Component::Normal(raw) => {
+                let name = raw
+                    .to_str()
+                    .ok_or_else(|| format!("{field} must use UTF-8 portable path components"))?;
+                if name.ends_with('.')
+                    || name.ends_with(' ')
+                    || name.chars().any(|ch| {
+                        ch.is_control()
+                            || matches!(ch, ':' | '<' | '>' | '"' | '|' | '?' | '*' | '\\')
+                    })
+                {
+                    return Err(format!("{field} contains a non-portable filename"));
+                }
+
+                // Reserved DOS devices remain special on Windows even with
+                // extensions, including in nested folders. Enforce the same
+                // contract on Linux/macOS so a published project can travel.
+                let stem = name
+                    .split('.')
+                    .next()
+                    .unwrap_or("")
+                    .trim_end()
+                    .to_uppercase();
+                let device_number = stem
+                    .strip_prefix("COM")
+                    .or_else(|| stem.strip_prefix("LPT"));
+                let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+                    || device_number.is_some_and(|digit| {
+                        matches!(
+                            digit,
+                            "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+                        )
+                    });
+                if reserved {
+                    return Err(format!("{field} contains a reserved Windows device name"));
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -1797,6 +1834,43 @@ mod tests {
             .is_err()
         );
         assert!(parse_project("kairo-project 1\nname \"Demo\"\nunknown \"x\"\n").is_err());
+    }
+
+    #[test]
+    fn project_and_external_paths_reject_nonportable_names_on_every_host() {
+        for value in [
+            "CON",
+            "Assets/con.txt",
+            "Scenes/NUL.kscene",
+            "Config/AUX.json",
+            "Shaders/COM1.glsl",
+            "LPT9",
+            "models/COM¹.glb",
+            "Scenes/LPT².tscn",
+            "Assets/invalid?.kassets",
+            "Assets/bad*name",
+            "Assets/wood|oak",
+            "Textures/a<b>.png",
+            "Assets/trailing.",
+            "Assets/trailing ",
+            "Textures/quote\"name.png",
+        ] {
+            assert!(
+                validate_relative_path(Path::new(value), "fixture").is_err(),
+                "unexpected portable path: {value}"
+            );
+        }
+        for value in [
+            "Assets/CON10.png",
+            "Models/conifer.glb",
+            "Scenes/Concrete.kscene",
+            "Config/auxiliary.kinput",
+        ] {
+            assert!(
+                validate_relative_path(Path::new(value), "fixture").is_ok(),
+                "unexpected path rejection: {value}"
+            );
+        }
     }
 
     #[test]
