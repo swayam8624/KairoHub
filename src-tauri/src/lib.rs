@@ -1,4 +1,5 @@
 pub mod project;
+pub mod source_game;
 
 use project::{EngineInstallation, HubState, PackageArtifact, ProjectHealth, RecoverySnapshotInfo};
 use std::fs;
@@ -242,6 +243,79 @@ fn import_external_gltf_project(
 }
 
 #[tauri::command]
+fn inspect_source_game(root: PathBuf) -> Result<source_game::SourceGameInspection, String> {
+    source_game::inspect_source_game(&root)
+}
+
+#[tauri::command]
+fn link_source_game(
+    root: PathBuf,
+    state: State<'_, ManagedHubState>,
+) -> Result<HubState, String> {
+    let inspection = source_game::inspect_source_game(&root)?;
+    let mut value = state.value.lock()
+        .map_err(|_| "KairoHub state lock was poisoned".to_string())?;
+    value.remember_source_game(inspection.root);
+    save_state(&state.data_file, &value)?;
+    Ok(value.clone())
+}
+
+#[tauri::command]
+async fn launch_source_game(
+    root: PathBuf,
+    edit: bool,
+    state: State<'_, ManagedHubState>,
+) -> Result<u32, String> {
+    {
+        let value = state.value.lock()
+            .map_err(|_| "KairoHub state lock was poisoned".to_string())?;
+        let canonical = std::fs::canonicalize(&root)
+            .map_err(|error| format!("Cannot resolve linked game: {error}"))?;
+        if !value.source_games.contains(&canonical) {
+            return Err("Link the source game in Hub before launching it".into());
+        }
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut child = source_game::launch_source_game(&root, edit)?;
+        let pid = child.id();
+        // A child which exits during startup was never a usable play session.
+        std::thread::sleep(Duration::from_millis(450));
+        match child.try_wait().map_err(|error| error.to_string())? {
+            Some(code) => Err(format!(
+                "Original engine exited during startup with {code}. Check game and engine compatibility."
+            )),
+            None => Ok(pid),
+        }
+    })
+    .await
+    .map_err(|error| format!("Game launch task failed: {error}"))?
+}
+
+#[tauri::command]
+fn reconstruct_source_game(
+    root: PathBuf,
+    state: State<'_, ManagedHubState>,
+) -> Result<PathBuf, String> {
+    let info = source_game::inspect_source_game(&root)?;
+    let engine_version = {
+        let value = state.value.lock()
+            .map_err(|_| "KairoHub state lock was poisoned".to_string())?;
+        let selected = value.selected_engine.as_ref()
+            .ok_or("Select a built Kairo installation to create a native scene")?;
+        project::inspect_engine(selected)?.version
+    };
+    // Asset-only glTF/GLB conversion; no claim of gameplay reconstruction.
+    let created = source_game::reconstruct_native_scene(
+        &info.root, &info.display_name, &engine_version
+    )?;
+    let mut value = state.value.lock()
+        .map_err(|_| "KairoHub state lock was poisoned".to_string())?;
+    value.remember(created.clone());
+    save_state(&state.data_file, &value)?;
+    Ok(created)
+}
+
+#[tauri::command]
 fn launch_editor(
     path: PathBuf,
     recovery_snapshot: Option<PathBuf>,
@@ -355,6 +429,10 @@ pub fn run() {
             recovery_snapshots,
             clone_project,
             import_external_gltf_project,
+            inspect_source_game,
+            link_source_game,
+            launch_source_game,
+            reconstruct_source_game,
             launch_editor,
             launch_player,
             package_project
