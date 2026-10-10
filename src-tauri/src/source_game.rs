@@ -373,6 +373,38 @@ mod tests {
         assert!(!info.original_runtime_available);
     }
 
+    #[test]
+    fn unity_project_is_inspected_without_pretending_to_run_csharp() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("ProjectSettings")).unwrap();
+        fs::create_dir_all(dir.path().join("Assets/Scenes")).unwrap();
+        fs::write(dir.path().join("ProjectSettings/ProjectVersion.txt"),
+            "m_EditorVersion: 2022.3.62f1").unwrap();
+        fs::write(dir.path().join("Assets/Scenes/Level.unity"), "%YAML 1.1").unwrap();
+        fs::write(dir.path().join("Assets/Player.cs"), "class Player {}").unwrap();
+        let info = inspect_source_game(dir.path()).unwrap();
+        assert_eq!(info.engine, "Unity");
+        assert_eq!(info.scene_files, 1);
+        assert_eq!(info.script_files, 1);
+        assert!(info.main_scene.is_none());
+        assert!(!info.original_runtime_available);
+        assert!(launch_source_game(dir.path(), false).is_err());
+    }
+
+    #[test]
+    fn unreal_project_is_inspected_without_launching_foreign_executables() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("Orbit.uproject"), "{\"FileVersion\":3}").unwrap();
+        fs::create_dir_all(dir.path().join("Content")).unwrap();
+        fs::write(dir.path().join("Content/World.umap"), b"UE4 cooked data").unwrap();
+        let info = inspect_source_game(dir.path()).unwrap();
+        assert_eq!(info.engine, "Unreal");
+        assert_eq!(info.display_name, "Orbit");
+        assert_eq!(info.scene_files, 1);
+        assert!(!info.original_runtime_available);
+        assert!(launch_source_game(dir.path(), false).is_err());
+    }
+
     #[cfg(unix)]
     #[test]
     fn symlinks_are_not_recursed_or_selected_as_entry_scenes() {
