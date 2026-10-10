@@ -318,6 +318,7 @@ async fn launch_source_game(
 #[tauri::command]
 fn reconstruct_source_game(
     root: PathBuf,
+    entry_scene: Option<String>,
     state: State<'_, ManagedHubState>,
 ) -> Result<PathBuf, String> {
     let info = source_game::inspect_source_game(&root)?;
@@ -334,7 +335,9 @@ fn reconstruct_source_game(
     };
     // Asset-only glTF/GLB conversion; no claim of gameplay reconstruction.
     let created =
-        source_game::reconstruct_native_scene(&info.root, &info.display_name, &engine_version)?;
+        source_game::reconstruct_native_scene_selected(
+            &info.root, &info.display_name, &engine_version, entry_scene.as_deref(),
+        )?;
     let mut value = state
         .value
         .lock()
