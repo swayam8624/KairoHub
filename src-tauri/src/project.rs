@@ -1827,6 +1827,33 @@ mod tests {
     }
 
     #[test]
+    fn project_and_external_paths_reject_nonportable_names_on_every_host() {
+        for value in [
+            "CON", "Assets/con.txt", "Scenes/NUL.kscene",
+            "Config/AUX.json", "Shaders/COM1.glsl", "LPT9",
+            "models/COM¹.glb", "Scenes/LPT².tscn",
+            "Assets/invalid?.kassets", "Assets/bad*name",
+            "Assets/wood|oak", "Textures/a<b>.png",
+            "Assets/trailing.", "Assets/trailing ",
+            "Textures/quote\"name.png",
+        ] {
+            assert!(
+                validate_relative_path(Path::new(value), "fixture").is_err(),
+                "unexpected portable path: {value}"
+            );
+        }
+        for value in [
+            "Assets/CON10.png", "Models/conifer.glb",
+            "Scenes/Concrete.kscene", "Config/auxiliary.kinput",
+        ] {
+            assert!(
+                validate_relative_path(Path::new(value), "fixture").is_ok(),
+                "unexpected path rejection: {value}"
+            );
+        }
+    }
+
+    #[test]
     fn project_creation_is_immediately_healthy() {
         let temporary = tempfile::tempdir().unwrap();
         let project = create_project(temporary.path(), "TestGame", "Test Game").unwrap();
