@@ -1749,6 +1749,8 @@ pub struct HubState {
     /// Linked original-engine source games are not Kairo project descriptors.
     /// Keep their catalogue separate so Run never accidentally invokes KairoPlayer.
     pub source_games: Vec<PathBuf>,
+    /// Optional Godot editor explicitly selected by the user in the Hub GUI.
+    pub godot_executable: Option<PathBuf>,
     pub favorites: BTreeSet<PathBuf>,
     pub engine_roots: Vec<PathBuf>,
     pub selected_engine: Option<PathBuf>,
