@@ -38,6 +38,7 @@ type ProjectHealth = {
 type HubState = {
   recentProjects: string[];
   sourceGames: string[];
+  godotExecutable: string | null;
   favorites: string[];
   engineRoots: string[];
   selectedEngine: string | null;
@@ -120,7 +121,7 @@ app.innerHTML = `
         <div id="project-list" class="project-list" aria-live="polite"></div>
       </section>
       <section class="project-section source-section" aria-label="Linked original games">
-        <div class="section-heading"><h2>Games from other engines</h2><small>Play in original engine or convert supported 3D scenes</small></div>
+        <div class="section-heading"><h2>Games from other engines</h2><button id="choose-godot" class="button secondary" type="button">Choose Godot executable</button></div>
         <div id="source-game-list" class="project-list" aria-live="polite"></div>
       </section>
     </main>
@@ -212,7 +213,7 @@ const packageDialog = document.querySelector<HTMLDialogElement>("#package-dialog
 const packageProfile = document.querySelector<HTMLSelectElement>("#package-profile")!;
 const packageDestination = document.querySelector<HTMLParagraphElement>("#package-destination")!;
 const toast = document.querySelector<HTMLDivElement>("#toast")!;
-let state: HubState = { recentProjects: [], sourceGames: [], favorites: [], engineRoots: [], selectedEngine: null };
+let state: HubState = { recentProjects: [], sourceGames: [], godotExecutable: null, favorites: [], engineRoots: [], selectedEngine: null };
 let sourceGamesByRoot = new Map<string, SourceGameInspection>();
 let sourceGameErrors = new Map<string, string>();
 let healthByPath = new Map<string, ProjectHealth>();
@@ -339,7 +340,8 @@ function renderSourceGames(): void {
     const info = sourceGamesByRoot.get(root);
     const error = sourceGameErrors.get(root);
     if (!info) return '<div class="compact-empty">' + escapeHtml(error ?? 'Inspecting ' + root) + '</div>';
-    const canPlay = info.engine === "Godot" && info.originalRuntimeAvailable;
+    const canPlay = info.engine === "Godot" && Boolean(info.mainScene) &&
+      (info.originalRuntimeAvailable || Boolean(state.godotExecutable));
     const canConvert = Boolean(info.nativeSceneCandidate);
     const note = info.notes[0] ?? 'Source project detected';
     const escapedRoot = escapeHtml(root);
@@ -441,6 +443,16 @@ document.querySelector("#import-folder-button")!.addEventListener("click", async
     notify(`Project imported from folder: ${project}`);
   } catch (error) { notify(String(error), true); }
 });
+document.querySelector("#choose-godot")!.addEventListener("click", async () => {
+  const executable = await open({ multiple: false, directory: false, title: "Select the Godot editor executable" });
+  if (!executable) return;
+  try {
+    state = await invoke<HubState>("register_godot_runtime", { executable });
+    renderSourceGames();
+    notify("Godot executable saved. Linked Godot games can now be run from the Hub.");
+  } catch (error) { notify(String(error), true); }
+});
+
 document.querySelector("#source-game-button")!.addEventListener("click", async () => {
   const root = await open({ multiple: false, directory: true, title: "Choose a source-game folder" });
   if (!root) return;
