@@ -705,13 +705,15 @@ projectList.addEventListener("click", async (event) => {
       showPackage(path);
     } else if (target.dataset.action === "run" || target.dataset.action === "open") {
       const mode = target.dataset.action === "run" ? "play" : "edit";
-      if (!await ensureNativeTools(mode)) return;
+      const shippedExecutable = mode === "play" &&
+        Boolean(healthByPath.get(path)?.descriptor?.playExecutable);
+      if (!shippedExecutable && !await ensureNativeTools(mode)) return;
       target.disabled = true;
       const originalLabel = target.textContent;
       target.textContent = mode === "play" ? "Starting…" : "Opening…";
       try {
         const processId = mode === "play"
-          ? await invoke<number>("launch_player", { path })
+          ? await invoke<number>(shippedExecutable ? "launch_prebuilt_game" : "launch_player", { path })
           : await invoke<number>("launch_editor", { path, recoverySnapshot: null });
         notify(mode === "play"
           ? `Game runtime started (process ${processId})`
