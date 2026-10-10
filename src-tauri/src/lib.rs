@@ -4,6 +4,7 @@ use project::{EngineInstallation, HubState, PackageArtifact, ProjectHealth, Reco
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::time::Duration;
 use tauri::{Manager, State};
 
 struct ManagedHubState {
@@ -264,7 +265,7 @@ fn launch_editor(
 }
 
 #[tauri::command]
-fn launch_player(path: PathBuf, state: State<'_, ManagedHubState>) -> Result<u32, String> {
+async fn launch_player(path: PathBuf, state: State<'_, ManagedHubState>) -> Result<u32, String> {
     let root = state
         .value
         .lock()
@@ -273,7 +274,29 @@ fn launch_player(path: PathBuf, state: State<'_, ManagedHubState>) -> Result<u32
         .clone()
         .ok_or_else(|| "Select a Kairo engine installation before running a project".to_string())?;
     let installation = project::inspect_engine(&root)?;
-    project::launch_player_with(&path, &installation).map(|child| child.id())
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut child = project::launch_player_with(&path, &installation)?;
+        let process_id = child.id();
+
+        // A successful spawn is not enough to call a game runnable. Give the
+        // child a small startup window and surface immediate loader/runtime
+        // failures to the Hub instead of showing a false-success toast.
+        std::thread::sleep(Duration::from_millis(450));
+        match child
+            .try_wait()
+            .map_err(|error| format!("Cannot inspect launched runtime process: {error}"))?
+        {
+            Some(status) if !status.success() => Err(format!(
+                "Kairo runtime exited immediately with status {status}. Open the project in KairoEditor for the project-local runtime log."
+            )),
+            Some(status) => Err(format!(
+                "Kairo runtime exited before creating an interactive session with status {status}."
+            )),
+            None => Ok(process_id),
+        }
+    })
+    .await
+    .map_err(|error| format!("KairoHub runtime launch task failed: {error}"))?
 }
 
 #[tauri::command]
