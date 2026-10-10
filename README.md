@@ -46,6 +46,20 @@ closed rather than launching a different scene.
 The desktop-macos.yml workflow packages an **unsigned Kairo.app** for
 internal testing; this is not a notarized release installer.
 
+### Machine-readable source migration plans
+
+To assess a real Godot game without executing scripts, use:
+
+```bash
+cargo run --locked --manifest-path src-tauri/Cargo.toml --bin kairo-hub-inspect-game -- /path/to/godot-game --migration-plan
+```
+
+The plan preserves deterministic source-node paths, authored script and
+PackedScene relationships, referenced resource locations and existence,
+signal counts, and explicit block reasons. It never silently upgrades an
+asset import to a certified playable game; Kairo-native equivalence still
+requires real gameplay translation and comparative testing.
+
 ## Development
 
 ```bash
