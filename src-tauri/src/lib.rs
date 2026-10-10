@@ -254,12 +254,11 @@ fn inspect_source_game_graph(root: PathBuf) -> Result<source_game_graph::GodotSc
 }
 
 #[tauri::command]
-fn link_source_game(
-    root: PathBuf,
-    state: State<'_, ManagedHubState>,
-) -> Result<HubState, String> {
+fn link_source_game(root: PathBuf, state: State<'_, ManagedHubState>) -> Result<HubState, String> {
     let inspection = source_game::inspect_source_game(&root)?;
-    let mut value = state.value.lock()
+    let mut value = state
+        .value
+        .lock()
         .map_err(|_| "KairoHub state lock was poisoned".to_string())?;
     value.remember_source_game(inspection.root);
     save_state(&state.data_file, &value)?;
@@ -272,7 +271,9 @@ fn register_godot_runtime(
     state: State<'_, ManagedHubState>,
 ) -> Result<HubState, String> {
     let validated = source_game::validate_godot_binary(&executable)?;
-    let mut value = state.value.lock()
+    let mut value = state
+        .value
+        .lock()
         .map_err(|_| "KairoHub state lock was poisoned".to_string())?;
     value.godot_executable = Some(validated);
     save_state(&state.data_file, &value)?;
@@ -286,7 +287,9 @@ async fn launch_source_game(
     state: State<'_, ManagedHubState>,
 ) -> Result<u32, String> {
     let chosen_runtime = {
-        let value = state.value.lock()
+        let value = state
+            .value
+            .lock()
             .map_err(|_| "KairoHub state lock was poisoned".to_string())?;
         let canonical = std::fs::canonicalize(&root)
             .map_err(|error| format!("Cannot resolve linked game: {error}"))?;
@@ -319,17 +322,22 @@ fn reconstruct_source_game(
 ) -> Result<PathBuf, String> {
     let info = source_game::inspect_source_game(&root)?;
     let engine_version = {
-        let value = state.value.lock()
+        let value = state
+            .value
+            .lock()
             .map_err(|_| "KairoHub state lock was poisoned".to_string())?;
-        let selected = value.selected_engine.as_ref()
+        let selected = value
+            .selected_engine
+            .as_ref()
             .ok_or("Select a built Kairo installation to create a native scene")?;
         project::inspect_engine(selected)?.version
     };
     // Asset-only glTF/GLB conversion; no claim of gameplay reconstruction.
-    let created = source_game::reconstruct_native_scene(
-        &info.root, &info.display_name, &engine_version
-    )?;
-    let mut value = state.value.lock()
+    let created =
+        source_game::reconstruct_native_scene(&info.root, &info.display_name, &engine_version)?;
+    let mut value = state
+        .value
+        .lock()
         .map_err(|_| "KairoHub state lock was poisoned".to_string())?;
     value.remember(created.clone());
     save_state(&state.data_file, &value)?;
