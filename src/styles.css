@@ -122,6 +122,15 @@ dialog::backdrop { background: #050709b8; }
 .game-inspection-details span { font-size: 12px; }
 .game-inspection-details p { grid-column: 1 / -1; color: #9daab3; font-size: 11px; line-height: 1.6; }
 @media (max-width: 1180px) {
-  .project-row.source-row { grid-template-columns: 42px minmax(0, 1fr) repeat(2, auto); }
-  .source-row [data-source-action="convert"], .source-row [data-source-action="edit"] { display: none; }
+  /* Never hide the import/edit actions on laptop-size Hub windows. */
+  .project-row.source-row {
+    grid-template-columns: 42px minmax(0, 1fr) repeat(2, minmax(84px, auto));
+    row-gap: 8px;
+  }
+  .source-row .project-glyph,
+  .source-row .project-info { grid-row: 1 / span 2; }
+  .source-row [data-source-action="inspect"] { grid-column: 3; grid-row: 1; }
+  .source-row [data-source-action="convert"] { grid-column: 4; grid-row: 1; }
+  .source-row [data-source-action="edit"] { grid-column: 3; grid-row: 2; }
+  .source-row [data-source-action="play"] { grid-column: 4; grid-row: 2; }
 }
