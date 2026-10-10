@@ -405,7 +405,7 @@ async function loadState(): Promise<void> {
   state = await invoke<HubState>("hub_state");
   engines = await invoke<EngineInstallation[]>("engine_installations");
   renderEngines();
-  await refreshHealth();
+  await Promise.all([refreshHealth(), refreshSourceGames()]);
 }
 
 document.querySelector("#import-button")!.addEventListener("click", () => importDialog.showModal());
@@ -419,6 +419,16 @@ document.querySelector("#import-folder-button")!.addEventListener("click", async
     notify(`Project imported from folder: ${project}`);
   } catch (error) { notify(String(error), true); }
 });
+document.querySelector("#source-game-button")!.addEventListener("click", async () => {
+  const root = await open({ multiple: false, directory: true, title: "Choose a source-game folder" });
+  if (!root) return;
+  try {
+    state = await invoke<HubState>("link_source_game", { root });
+    await refreshSourceGames();
+    notify("Game linked. Check its compatibility report before conversion.");
+  } catch (error) { notify(String(error), true); }
+});
+document.querySelector("#close-game-inspection")!.addEventListener("click", () => gameInspectionDialog.close());
 document.querySelector("#create-button")!.addEventListener("click", () => createDialog.showModal());
 document.querySelector("#clone-button")!.addEventListener("click", () => cloneDialog.showModal());
 document.querySelector("#external-import-button")!.addEventListener("click", () => externalImportDialog.showModal());
@@ -579,6 +589,30 @@ projectList.addEventListener("click", async (event) => {
       notify(`KairoEditor launched (process ${processId})`);
     }
   } catch (error) { notify(String(error), true); }
+});
+
+sourceGameList.addEventListener("click", async (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-source-action]");
+  const row = button?.closest<HTMLElement>("[data-source-root]");
+  if (!button || !row) return;
+  const root = row.dataset.sourceRoot!;
+  const action = button.dataset.sourceAction;
+  const info = sourceGamesByRoot.get(root);
+  if (!info) return;
+  if (action === "inspect") { showSourceInspection(info); return; }
+  button.disabled = true;
+  try {
+    if (action === "play" || action === "edit") {
+      const pid = await invoke<number>("launch_source_game", { root, edit: action === "edit" });
+      notify("Original " + info.engine + " launched (process " + pid + "). Not Kairo-native gameplay.");
+    } else if (action === "convert") {
+      const project = await invoke<string>("reconstruct_source_game", { root });
+      state = await invoke<HubState>("hub_state");
+      await refreshHealth();
+      notify("Kairo 3D scene imported: " + project + ". Gameplay code is not converted.");
+    }
+  } catch (error) { notify(String(error), true); }
+  finally { button.disabled = false; }
 });
 
 recoveryList.addEventListener("click", async (event) => {
