@@ -1592,6 +1592,51 @@ fn compile_project_logic(project: &Path, installation: &EngineInstallation) -> R
     Ok(())
 }
 
+/// Resolve a user-selected Kairo project's already-built standalone player.
+/// An ordinary Play action must not force a compiler install if the game ships
+/// a runtime executable. This only applies to a validated native .kproject;
+/// external-engine source games never reach this function.
+pub fn resolve_prebuilt_game(project: &Path) -> Result<(PathBuf, PathBuf), String> {
+    let health = inspect_project(project);
+    if !health.is_valid() {
+        return Err(format!("Cannot play this project: {}", health.errors.join("; ")));
+    }
+    let relative = health.descriptor.as_ref()
+        .and_then(|descriptor| descriptor.play_executable.as_ref())
+        .ok_or("This project has no built-in Play executable; select a Kairo engine installation")?;
+    validate_relative_path(relative, "play-executable")?;
+    let canonical_project = fs::canonicalize(project)
+        .map_err(|error| format!("Cannot resolve project descriptor: {error}"))?;
+    let root = canonical_project.parent()
+        .ok_or("Project descriptor has no parent directory")?;
+
+    let mut candidate = root.to_path_buf();
+    for component in relative.components() {
+        let Component::Normal(part) = component else {
+            return Err("Play executable must use a project-relative path".into());
+        };
+        candidate.push(part);
+        let metadata = fs::symlink_metadata(&candidate)
+            .map_err(|error| format!("Cannot inspect Play executable '{}': {error}", relative.display()))?;
+        if metadata.file_type().is_symlink() {
+            return Err("Play executable path may not cross symbolic links".into());
+        }
+    }
+    if !candidate.is_file() {
+        return Err("Configured Play executable is not a regular file".into());
+    }
+    Ok((candidate, canonical_project))
+}
+
+/// Play an already-built game without KairoPlayer, compiler, source edits or
+/// any Kairo development toolchain. Passing the project descriptor is the same
+/// argv contract as an authored play-executable project.
+pub fn launch_prebuilt_game(project: &Path) -> Result<Child, String> {
+    let (executable, descriptor) = resolve_prebuilt_game(project)?;
+    Command::new(&executable).arg(&descriptor).spawn()
+        .map_err(|error| format!("Cannot start this prebuilt game: {error}"))
+}
+
 /// Builds attached visual logic, then launches the selected engine's player
 /// after KairoHub's structural inspection and KairoPlayer's runtime boundary.
 /// Command arguments are passed directly, never through a host shell.
@@ -1599,39 +1644,12 @@ pub fn launch_player_with(
     project: &Path,
     installation: &EngineInstallation,
 ) -> Result<Child, String> {
-    let health = validate_player_operation(project, installation)?;
-    compile_project_logic(project, installation)?;
-    let descriptor = health
-        .descriptor
-        .as_ref()
-        .ok_or("Project validation succeeded without descriptor metadata")?;
-
-    if let Some(relative) = &descriptor.play_executable {
-        let project_file = fs::canonicalize(project)
-            .map_err(|error| format!("Cannot resolve project descriptor: {error}"))?;
-        let root = project_file
-            .parent()
-            .ok_or("Project descriptor has no parent directory")?;
-        let executable = fs::canonicalize(root.join(relative)).map_err(|error| {
-            format!(
-                "Project Play executable is missing or unreadable '{}': {error}",
-                relative.display()
-            )
-        })?;
-        if !executable.starts_with(root) || !executable.is_file() {
-            return Err("Project Play executable escapes the project root or is not a file".into());
-        }
-        return Command::new(&executable)
-            .arg(&project_file)
-            .spawn()
-            .map_err(|error| {
-                format!(
-                    "Cannot launch project Play executable '{}': {error}",
-                    executable.display()
-                )
-            });
+    if inspect_project(project).descriptor.as_ref()
+        .and_then(|descriptor| descriptor.play_executable.as_ref()).is_some() {
+        return launch_prebuilt_game(project);
     }
-
+    validate_player_operation(project, installation)?;
+    compile_project_logic(project, installation)?;
     Command::new(&installation.player)
         .arg(project)
         .spawn()
