@@ -32,6 +32,12 @@ the KairoHub game library instead of a source-code editor.
 
 - **Play** a ready native Kairo project: Hub validates and compiles authored
   project logic and launches KairoPlayer with startup-failure reporting.
+- **Play prebuilt** is genuinely zero-development-toolchain: when a native
+  `.kproject` explicitly names a local `play-executable`, Hub verifies that
+  executable is project-owned, has no symlink components, and launches it
+  directly with the project path as its only argument. No compiler, editor,
+  CMake or engine source checkout is needed. Only an explicit Play click
+  launches the game; importing files never executes them automatically.
 - **Play** a linked Godot game: the original Godot runtime runs the game.
   On first use, the Play action offers an executable chooser if needed.
 - **Edit** is separate from Play for both native projects and Godot sources.
@@ -97,7 +103,7 @@ overwritten by Repair.
 - Stores Hub recents/favorites in the operating system application-data directory, never in the project.
 - Spawns KairoEditor as a child process through the documented `--project` and `--no-layout-persistence` CLI.
 - Discovers KairoEditor, KairoProjectCompiler, and KairoPlayer from one selected engine build.
-- Runs `<compiler> <project.kproject>` to publish source-bound attached logic, then spawns `<player> <project.kproject>` only when compilation succeeds; no command is routed through a shell.
+- For editable native projects, runs `<compiler> <project.kproject>` to publish attached logic, then spawns `<player> <project.kproject>` only when compilation succeeds. An explicitly configured, already-built `play-executable` is verified and launched directly without any dev toolchain. No command is routed through a shell.
 - Lists build profiles from the validated project descriptor and runs `<player> <project.kproject> --package <profile>` only after the same compiler gate succeeds. Replacement is explicit, and success is reported only after Hub verifies the published package manifest.
 - Imports a local `.kproject` only after its descriptor and required bootstrap files validate.
 - Clones only strict HTTPS `github.com`/`gitlab.com` `.git` URLs without a shell, does not follow repository symlinks while discovering projects, deletes an invalid clone, and accepts exactly one validated `.kproject`.
