@@ -439,6 +439,33 @@ async function refreshHealth(): Promise<void> {
   }));
 }
 
+// A novice should never need to open Settings before their first Play.
+// Resolve the selected installation at the point of action and describe the
+// exact missing tool instead of a generic failed-process notification.
+async function ensureNativeTools(mode: "play" | "edit"): Promise<boolean> {
+  let selected = engines.find((engine) => engine.root === state.selectedEngine);
+  if (!selected) {
+    const root = await open({ multiple: false, directory: true,
+      title: "Locate your KairoGameEngine installation to " + mode });
+    if (!root) return false;
+    const installed = await invoke<EngineInstallation>("register_engine", { root });
+    state = await invoke<HubState>("hub_state");
+    engines = await invoke<EngineInstallation[]>("engine_installations");
+    selected = installed;
+    renderEngines();
+  }
+  if (mode === "play" && (!selected.projectCompilerAvailable || !selected.playerAvailable)) {
+    throw new Error("This Kairo engine is not built for Play yet. Missing: " +
+      [!selected.projectCompilerAvailable ? "Project Compiler" : "",
+       !selected.playerAvailable ? "KairoPlayer" : ""].filter(Boolean).join(", ") +
+      ". Build KairoGameEngine once, then return to Play.");
+  }
+  if (mode === "edit" && !selected.editorAvailable) {
+    throw new Error("KairoEditor is not built in this installation. Build KairoGameEngine once, then choose Edit again.");
+  }
+  return true;
+}
+
 async function loadState(): Promise<void> {
   state = await invoke<HubState>("hub_state");
   engines = await invoke<EngineInstallation[]>("engine_installations");
@@ -629,12 +656,23 @@ projectList.addEventListener("click", async (event) => {
       await showRecovery(path);
     } else if (target.dataset.action === "package") {
       showPackage(path);
-    } else if (target.dataset.action === "run") {
-      const processId = await invoke<number>("launch_player", { path });
-      notify(`Game runtime started (process ${processId})`);
-    } else {
-      const processId = await invoke<number>("launch_editor", { path, recoverySnapshot: null });
-      notify(`KairoEditor launched (process ${processId})`);
+    } else if (target.dataset.action === "run" || target.dataset.action === "open") {
+      const mode = target.dataset.action === "run" ? "play" : "edit";
+      if (!await ensureNativeTools(mode)) return;
+      target.disabled = true;
+      const originalLabel = target.textContent;
+      target.textContent = mode === "play" ? "Starting…" : "Opening…";
+      try {
+        const processId = mode === "play"
+          ? await invoke<number>("launch_player", { path })
+          : await invoke<number>("launch_editor", { path, recoverySnapshot: null });
+        notify(mode === "play"
+          ? `Game runtime started (process ${processId})`
+          : `Editor opened (process ${processId})`);
+      } finally {
+        target.disabled = false;
+        target.textContent = originalLabel;
+      }
     }
   } catch (error) { notify(String(error), true); }
 });
