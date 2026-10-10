@@ -108,3 +108,20 @@ dialog::backdrop { background: #050709b8; }
   .project-row { grid-template-columns: 42px minmax(0, 1fr) 34px auto auto auto; }
   .project-row [data-action="recovery"] { display: none; }
 }
+
+/* Keep the Hub navigable when discovery tools occupy the header. */
+.topbar { height: auto; min-height: 116px; gap: 16px; }
+.header-actions { flex-wrap: wrap; justify-content: flex-end; }
+.source-section { padding-top: 0; }
+.source-section .section-heading small { color: #86939d; font-size: 11px; }
+.project-row.source-row { grid-template-columns: 42px minmax(0, 1fr) repeat(4, auto); }
+.game-inspection-details { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.game-inspection-details > div { min-width: 0; background: #13191d; border: 1px solid #2a343a; padding: 12px; }
+.game-inspection-details strong, .game-inspection-details span { display: block; overflow-wrap: anywhere; }
+.game-inspection-details strong { font-size: 11px; color: #84929b; margin-bottom: 5px; }
+.game-inspection-details span { font-size: 12px; }
+.game-inspection-details p { grid-column: 1 / -1; color: #9daab3; font-size: 11px; line-height: 1.6; }
+@media (max-width: 1180px) {
+  .project-row.source-row { grid-template-columns: 42px minmax(0, 1fr) repeat(2, auto); }
+  .source-row [data-source-action="convert"], .source-row [data-source-action="edit"] { display: none; }
+}
