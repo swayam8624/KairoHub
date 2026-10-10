@@ -134,3 +134,10 @@ dialog::backdrop { background: #050709b8; }
   .source-row [data-source-action="edit"] { grid-column: 3; grid-row: 2; }
   .source-row [data-source-action="play"] { grid-column: 4; grid-row: 2; }
 }
+
+/* Keep conversion diagnostics readable on smaller displays and keyboards. */
+.migration-plan { grid-column: 1 / -1; background: #13191d; border: 1px solid #304049; padding: 12px; border-radius: 5px; }
+.migration-plan > strong { color: #d5eee2; }
+.migration-plan ol { padding-left: 22px; margin: 9px 0 0; max-height: 340px; overflow-y: auto; }
+.migration-plan li { padding: 6px 2px; font-size: 11px; line-height: 1.5; color: #b6c4cd; }
+.migration-plan li small { display: block; color: #8595a0; margin: 2px 0 0; }
