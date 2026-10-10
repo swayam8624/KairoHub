@@ -111,7 +111,10 @@ fn resolve_godot_scene_uid(root: &Path, uid: &str) -> Result<String, String> {
             }
             if meta.is_dir() {
                 let name = entry.file_name();
-                if matches!(name.to_str().unwrap_or(""), ".git" | ".godot" | ".kairo" | "node_modules") {
+                if matches!(
+                    name.to_str().unwrap_or(""),
+                    ".git" | ".godot" | ".kairo" | "node_modules"
+                ) {
                     continue;
                 }
                 if depth < MAX_SCAN_DEPTH {
@@ -119,7 +122,10 @@ fn resolve_godot_scene_uid(root: &Path, uid: &str) -> Result<String, String> {
                 }
                 continue;
             }
-            if !meta.is_file() || path.extension() != Some(OsStr::new("tscn")) || meta.len() > 8 * 1024 * 1024 {
+            if !meta.is_file()
+                || path.extension() != Some(OsStr::new("tscn"))
+                || meta.len() > 8 * 1024 * 1024
+            {
                 continue;
             }
             // Only the scene header may declare the scene's UID.
@@ -128,23 +134,32 @@ fn resolve_godot_scene_uid(root: &Path, uid: &str) -> Result<String, String> {
             use std::io::Read;
             let bytes = file.read(&mut prefix).map_err(|e| e.to_string())?;
             let text = String::from_utf8_lossy(&prefix[..bytes]);
-            let header = text.lines().find(|line| !line.trim().is_empty()).unwrap_or("");
+            let header = text
+                .lines()
+                .find(|line| !line.trim().is_empty())
+                .unwrap_or("");
             if !header.starts_with("[gd_scene ") || !header.ends_with(']') {
                 continue;
             }
             // Delimit UID token to avoid accepting a prefix of another UID.
             let expected = format!("uid=\"{uid}\"");
-            if !header.split_ascii_whitespace().any(|field| field == expected || field == format!("{expected}]")) {
+            if !header
+                .split_ascii_whitespace()
+                .any(|field| field == expected || field == format!("{expected}]"))
+            {
                 continue;
             }
             let relative = path.strip_prefix(root).map_err(|e| e.to_string())?;
             let portable = format!("res://{}", relative.to_string_lossy().replace('\\', "/"));
             if match_path.replace(portable).is_some() {
-                return Err(format!("Godot scene UID {uid} is ambiguous between multiple scene files"));
+                return Err(format!(
+                    "Godot scene UID {uid} is ambiguous between multiple scene files"
+                ));
             }
         }
     }
-    match_path.ok_or_else(|| format!("Godot scene UID {uid} was not found in project-owned text scenes"))
+    match_path
+        .ok_or_else(|| format!("Godot scene UID {uid} was not found in project-owned text scenes"))
 }
 
 fn inspect_godot_scene(root: &Path, scene: &str) -> Result<String, String> {
@@ -414,13 +429,17 @@ pub fn inspect_source_game(input: &Path) -> Result<SourceGameInspection, String>
     native_candidates.sort();
     native_candidates.dedup();
     if candidates_truncated {
-        notes.push("More than 256 3D scene candidates found; explicit scene discovery is incomplete".into());
+        notes.push(
+            "More than 256 3D scene candidates found; explicit scene discovery is incomplete"
+                .into(),
+        );
     }
-    let native_scene_candidate = if !truncated && !candidates_truncated && native_candidates.len() == 1 {
-        Some(native_candidates[0].clone())
-    } else {
-        None
-    };
+    let native_scene_candidate =
+        if !truncated && !candidates_truncated && native_candidates.len() == 1 {
+            Some(native_candidates[0].clone())
+        } else {
+            None
+        };
     if native_scene_candidate.is_some() {
         notes.push("One portable 3D scene is available for native Kairo scene-only import; gameplay is not translated".into());
     } else if native_candidates.len() > 1 {
@@ -610,11 +629,17 @@ mod tests {
     fn godot_uid_entry_scene_resolves_to_safe_project_owned_text_scene() {
         let dir = tempfile::tempdir().unwrap();
         game(dir.path());
-        fs::write(dir.path().join("project.godot"),
-            "config_version=5\n[application]\nrun/main_scene=\"uid://abc123\"\n").unwrap();
+        fs::write(
+            dir.path().join("project.godot"),
+            "config_version=5\n[application]\nrun/main_scene=\"uid://abc123\"\n",
+        )
+        .unwrap();
         fs::create_dir_all(dir.path().join("Levels")).unwrap();
-        fs::write(dir.path().join("Levels/Start.tscn"),
-            "[gd_scene format=3 uid=\"uid://abc123\"]\n[node name=\"Start\" type=\"Node2D\"]\n").unwrap();
+        fs::write(
+            dir.path().join("Levels/Start.tscn"),
+            "[gd_scene format=3 uid=\"uid://abc123\"]\n[node name=\"Start\" type=\"Node2D\"]\n",
+        )
+        .unwrap();
         let info = inspect_source_game(dir.path()).unwrap();
         assert_eq!(info.main_scene.as_deref(), Some("res://Levels/Start.tscn"));
         // Resolving to a concrete path also enables the structural game graph.
@@ -627,17 +652,24 @@ mod tests {
     fn godot_uid_duplicate_or_missing_entries_fail_closed() {
         let dir = tempfile::tempdir().unwrap();
         game(dir.path());
-        fs::write(dir.path().join("project.godot"),
-            "config_version=5\n[application]\nrun/main_scene=\"uid://abc123\"\n").unwrap();
-        let scene = "[gd_scene uid=\"uid://abc123\" format=3]\n[node name=\"Main\" type=\"Node2D\"]\n";
+        fs::write(
+            dir.path().join("project.godot"),
+            "config_version=5\n[application]\nrun/main_scene=\"uid://abc123\"\n",
+        )
+        .unwrap();
+        let scene =
+            "[gd_scene uid=\"uid://abc123\" format=3]\n[node name=\"Main\" type=\"Node2D\"]\n";
         fs::write(dir.path().join("main.tscn"), scene).unwrap();
         fs::write(dir.path().join("duplicate.tscn"), scene).unwrap();
         let info = inspect_source_game(dir.path()).unwrap();
         assert!(info.main_scene.is_none());
         assert!(info.notes.iter().any(|s| s.contains("ambiguous")));
         fs::remove_file(dir.path().join("duplicate.tscn")).unwrap();
-        fs::write(dir.path().join("project.godot"),
-            "config_version=5\n[application]\nrun/main_scene=\"uid://missing\"\n").unwrap();
+        fs::write(
+            dir.path().join("project.godot"),
+            "config_version=5\n[application]\nrun/main_scene=\"uid://missing\"\n",
+        )
+        .unwrap();
         let info = inspect_source_game(dir.path()).unwrap();
         assert!(info.main_scene.is_none());
         assert!(info.notes.iter().any(|s| s.contains("not found")));
@@ -649,25 +681,42 @@ mod tests {
         game(dir.path());
         fs::create_dir_all(dir.path().join("models")).unwrap();
         for name in ["a.gltf", "b.gltf"] {
-            fs::write(dir.path().join("models").join(name),
-                "{\"asset\":{\"version\":\"2.0\"}}").unwrap();
+            fs::write(
+                dir.path().join("models").join(name),
+                "{\"asset\":{\"version\":\"2.0\"}}",
+            )
+            .unwrap();
         }
         let info = inspect_source_game(dir.path()).unwrap();
         assert_eq!(info.native_scene_candidate, None);
-        assert_eq!(info.native_scene_candidates,
-            ["models/a.gltf".to_owned(), "models/b.gltf".to_owned()]);
-        assert!(reconstruct_native_scene_selected(dir.path(), "Demo", "0.1.0",
-            Some("../outside.gltf")).is_err());
-        assert!(reconstruct_native_scene_selected(dir.path(), "Demo", "0.1.0",
-            Some("models/absent.gltf")).is_err());
-        let imported = reconstruct_native_scene_selected(dir.path(), "Demo", "0.1.0",
-            Some("models/b.gltf")).unwrap();
+        assert_eq!(
+            info.native_scene_candidates,
+            ["models/a.gltf".to_owned(), "models/b.gltf".to_owned()]
+        );
+        assert!(
+            reconstruct_native_scene_selected(dir.path(), "Demo", "0.1.0", Some("../outside.gltf"))
+                .is_err()
+        );
+        assert!(
+            reconstruct_native_scene_selected(
+                dir.path(),
+                "Demo",
+                "0.1.0",
+                Some("models/absent.gltf")
+            )
+            .is_err()
+        );
+        let imported =
+            reconstruct_native_scene_selected(dir.path(), "Demo", "0.1.0", Some("models/b.gltf"))
+                .unwrap();
         assert!(imported.ends_with("KairoImported.kproject"));
         let manifest = fs::read_to_string(dir.path().join(".kairo/Assets.kassets")).unwrap();
         assert!(manifest.contains("models/b.gltf"));
         // Never replace an existing author's generated project on repeat import.
-        assert!(reconstruct_native_scene_selected(dir.path(), "Demo", "0.1.0",
-            Some("models/a.gltf")).is_err());
+        assert!(
+            reconstruct_native_scene_selected(dir.path(), "Demo", "0.1.0", Some("models/a.gltf"))
+                .is_err()
+        );
     }
 
     #[test]
