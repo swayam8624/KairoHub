@@ -43,8 +43,8 @@ fn ensure_safe_root(root: &Path) -> Result<PathBuf, String> {
     if root.as_os_str().is_empty() {
         return Err("Choose a source-game directory".into());
     }
-    let metadata = fs::symlink_metadata(root)
-        .map_err(|e| format!("Cannot inspect game directory: {e}"))?;
+    let metadata =
+        fs::symlink_metadata(root).map_err(|e| format!("Cannot inspect game directory: {e}"))?;
     if !metadata.is_dir() || metadata.file_type().is_symlink() {
         return Err("Choose a real directory, not a file or symbolic link".into());
     }
@@ -80,13 +80,17 @@ fn godot_setting(content: &str, section: &str, key: &str) -> Option<String> {
 }
 
 fn inspect_godot_scene(root: &Path, scene: &str) -> Result<String, String> {
-    let path = scene.strip_prefix("res://")
-        .ok_or("Godot main_scene is not a res:// path; UID-based entry resolution is not supported yet")?;
+    let path = scene.strip_prefix("res://").ok_or(
+        "Godot main_scene is not a res:// path; UID-based entry resolution is not supported yet",
+    )?;
     if path.is_empty() || path.contains('\\') || path.contains('\0') {
         return Err("Godot startup scene must have a safe non-empty res:// path".into());
     }
     let relative = Path::new(path);
-    if relative.components().any(|c| !matches!(c, std::path::Component::Normal(_))) {
+    if relative
+        .components()
+        .any(|c| !matches!(c, std::path::Component::Normal(_)))
+    {
         return Err("Godot startup scene must not contain traversal or absolute paths".into());
     }
     let absolute = root.join(relative);
@@ -108,7 +112,9 @@ pub fn find_godot_runtime() -> Option<PathBuf> {
     // An explicit user-configured Godot installation has priority.
     if let Some(value) = std::env::var_os("KAIRO_GODOT_EXECUTABLE") {
         let path = PathBuf::from(value);
-        if executable_at(&path) { return Some(path); }
+        if executable_at(&path) {
+            return Some(path);
+        }
     }
     let executables: &[&str] = if cfg!(windows) {
         &["godot.exe", "godot4.exe", "Godot.exe"]
@@ -119,13 +125,17 @@ pub fn find_godot_runtime() -> Option<PathBuf> {
         for directory in std::env::split_paths(&path) {
             for executable in executables {
                 let candidate = directory.join(executable);
-                if executable_at(&candidate) { return Some(candidate); }
+                if executable_at(&candidate) {
+                    return Some(candidate);
+                }
             }
         }
     }
     if cfg!(target_os = "macos") {
         let bundle = Path::new("/Applications/Godot.app/Contents/MacOS/Godot");
-        if executable_at(bundle) { return Some(bundle.to_path_buf()); }
+        if executable_at(bundle) {
+            return Some(bundle.to_path_buf());
+        }
     }
     None
 }
@@ -137,14 +147,17 @@ pub fn inspect_source_game(input: &Path) -> Result<SourceGameInspection, String>
     let unity = is_regular_marker(&unity_marker)
         && root.join("Assets").is_dir()
         && !fs::symlink_metadata(root.join("Assets"))
-            .map(|m| m.file_type().is_symlink()).unwrap_or(true)
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(true)
         && !fs::symlink_metadata(root.join("ProjectSettings"))
-            .map(|m| m.file_type().is_symlink()).unwrap_or(true);
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(true);
     let mut unreal_markers = Vec::new();
     for entry in fs::read_dir(&root).map_err(|e| e.to_string())? {
         let entry = entry.map_err(|e| e.to_string())?;
         if entry.path().extension() == Some(OsStr::new("uproject"))
-            && is_regular_marker(&entry.path()) {
+            && is_regular_marker(&entry.path())
+        {
             unreal_markers.push(entry.path());
         }
     }
@@ -156,9 +169,18 @@ pub fn inspect_source_game(input: &Path) -> Result<SourceGameInspection, String>
         return Err("Select a source root with exactly one recognized engine marker (Godot, Unity or Unreal)".into());
     }
 
-    let engine = if godot { "Godot" } else if unity { "Unity" } else { "Unreal" };
-    let mut display_name = root.file_name()
-        .and_then(OsStr::to_str).unwrap_or("Imported game").to_owned();
+    let engine = if godot {
+        "Godot"
+    } else if unity {
+        "Unity"
+    } else {
+        "Unreal"
+    };
+    let mut display_name = root
+        .file_name()
+        .and_then(OsStr::to_str)
+        .unwrap_or("Imported game")
+        .to_owned();
     let mut main_scene = None;
     let mut notes = Vec::new();
     let mut main_valid = false;
@@ -172,7 +194,9 @@ pub fn inspect_source_game(input: &Path) -> Result<SourceGameInspection, String>
         let content = fs::read_to_string(&marker)
             .map_err(|e| format!("Cannot read Godot project.godot as UTF-8: {e}"))?;
         if let Some(name) = godot_setting(&content, "application", "config/name") {
-            if !name.trim().is_empty() { display_name = name; }
+            if !name.trim().is_empty() {
+                display_name = name;
+            }
         }
         if let Some(scene) = godot_setting(&content, "application", "run/main_scene") {
             match inspect_godot_scene(&root, &scene) {
@@ -183,11 +207,16 @@ pub fn inspect_source_game(input: &Path) -> Result<SourceGameInspection, String>
                 Err(reason) => notes.push(reason),
             }
         } else {
-            notes.push("No readable run/main_scene; configure a Godot entry scene before playing".into());
+            notes.push(
+                "No readable run/main_scene; configure a Godot entry scene before playing".into(),
+            );
         }
     } else if unreal {
-        display_name = unreal_markers[0].file_stem()
-            .and_then(OsStr::to_str).unwrap_or(&display_name).to_owned();
+        display_name = unreal_markers[0]
+            .file_stem()
+            .and_then(OsStr::to_str)
+            .unwrap_or(&display_name)
+            .to_owned();
     }
 
     let mut pending = vec![(root.clone(), 0_usize)];
@@ -201,7 +230,8 @@ pub fn inspect_source_game(input: &Path) -> Result<SourceGameInspection, String>
 
     'scan: while let Some((directory, depth)) = pending.pop() {
         for entry in fs::read_dir(&directory)
-            .map_err(|e| format!("Cannot inspect {}: {e}", directory.display()))? {
+            .map_err(|e| format!("Cannot inspect {}: {e}", directory.display()))?
+        {
             let entry = entry.map_err(|e| e.to_string())?;
             walked += 1;
             if walked > MAX_SCAN_ENTRIES {
@@ -212,13 +242,26 @@ pub fn inspect_source_game(input: &Path) -> Result<SourceGameInspection, String>
             }
             let path = entry.path();
             let meta = fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
-            if meta.file_type().is_symlink() { continue; }
+            if meta.file_type().is_symlink() {
+                continue;
+            }
             let name = entry.file_name();
             let name = name.to_string_lossy();
             if meta.is_dir() {
-                if matches!(name.as_ref(), ".git" | ".godot" | ".kairo" | "Library" |
-                    "Temp" | "Intermediate" | "DerivedDataCache" | "node_modules" |
-                    "Build" | "Binaries" | ".svn") {
+                if matches!(
+                    name.as_ref(),
+                    ".git"
+                        | ".godot"
+                        | ".kairo"
+                        | "Library"
+                        | "Temp"
+                        | "Intermediate"
+                        | "DerivedDataCache"
+                        | "node_modules"
+                        | "Build"
+                        | "Binaries"
+                        | ".svn"
+                ) {
                     continue;
                 }
                 if depth < MAX_SCAN_DEPTH {
@@ -226,19 +269,39 @@ pub fn inspect_source_game(input: &Path) -> Result<SourceGameInspection, String>
                 }
                 continue;
             }
-            if !meta.is_file() { continue; }
+            if !meta.is_file() {
+                continue;
+            }
             scanned_files += 1;
-            let extension = path.extension()
-                .and_then(OsStr::to_str).unwrap_or("").to_ascii_lowercase();
+            let extension = path
+                .extension()
+                .and_then(OsStr::to_str)
+                .unwrap_or("")
+                .to_ascii_lowercase();
             if matches!(extension.as_str(), "tscn" | "scn" | "unity" | "umap") {
                 scene_files += 1;
             }
-            if matches!(extension.as_str(), "gd" | "cs" | "cpp" | "h" | "hpp" |
-                "hlsl" | "shader" | "gdshader" | "lua") {
+            if matches!(
+                extension.as_str(),
+                "gd" | "cs" | "cpp" | "h" | "hpp" | "hlsl" | "shader" | "gdshader" | "lua"
+            ) {
                 script_files += 1;
             }
-            if matches!(extension.as_str(), "png" | "jpg" | "jpeg" | "webp" |
-                "wav" | "ogg" | "mp3" | "glb" | "gltf" | "fbx" | "obj" | "tga") {
+            if matches!(
+                extension.as_str(),
+                "png"
+                    | "jpg"
+                    | "jpeg"
+                    | "webp"
+                    | "wav"
+                    | "ogg"
+                    | "mp3"
+                    | "glb"
+                    | "gltf"
+                    | "fbx"
+                    | "obj"
+                    | "tga"
+            ) {
                 media_files += 1;
             }
             if matches!(extension.as_str(), "glb" | "gltf") && native_candidates.len() < 2 {
@@ -246,12 +309,14 @@ pub fn inspect_source_game(input: &Path) -> Result<SourceGameInspection, String>
                 // glTF import. Never follow symbolic links or arbitrary paths.
                 if let Ok(relative) = path.strip_prefix(&root) {
                     let portable = relative.components().all(|part| match part {
-                        std::path::Component::Normal(value) => value.to_str().is_some_and(
-                            |s| !s.is_empty()
+                        std::path::Component::Normal(value) => value.to_str().is_some_and(|s| {
+                            !s.is_empty()
                                 && !s.ends_with('.')
                                 && !s.ends_with(' ')
-                                && !s.chars().any(|ch| matches!(ch,
-                                    ':' | '\\' | '"' | '<' | '>' | '|' | '?' | '*'))),
+                                && !s.chars().any(|ch| {
+                                    matches!(ch, ':' | '\\' | '"' | '<' | '>' | '|' | '?' | '*')
+                                })
+                        }),
                         _ => false,
                     });
                     if portable {
@@ -270,11 +335,16 @@ pub fn inspect_source_game(input: &Path) -> Result<SourceGameInspection, String>
 
     let native_scene_candidate = if !truncated && native_candidates.len() == 1 {
         Some(native_candidates.remove(0))
-    } else { None };
+    } else {
+        None
+    };
     if native_scene_candidate.is_some() {
         notes.push("One portable 3D scene is available for native Kairo scene-only import; gameplay is not translated".into());
     } else if native_candidates.len() > 1 {
-        notes.push("Multiple glTF/GLB scenes found; native import needs an explicit scene selection".into());
+        notes.push(
+            "Multiple glTF/GLB scenes found; native import needs an explicit scene selection"
+                .into(),
+        );
     } else {
         notes.push("No automatically convertible glTF/GLB scene; a full gameplay migration is not currently supported".into());
     }
@@ -283,12 +353,23 @@ pub fn inspect_source_game(input: &Path) -> Result<SourceGameInspection, String>
     }
     let runtime_available = godot && main_valid && find_godot_runtime().is_some();
     if godot && main_valid && !runtime_available {
-        notes.push("Install Godot 4 or set KAIRO_GODOT_EXECUTABLE to Run using the original Godot engine".into());
+        notes.push(
+            "Install Godot 4 or set KAIRO_GODOT_EXECUTABLE to Run using the original Godot engine"
+                .into(),
+        );
     }
     Ok(SourceGameInspection {
-        root, engine: engine.into(), display_name, main_scene,
-        scene_files, script_files, media_files, scanned_files,
-        native_scene_candidate, original_runtime_available: runtime_available, notes,
+        root,
+        engine: engine.into(),
+        display_name,
+        main_scene,
+        scene_files,
+        script_files,
+        media_files,
+        scanned_files,
+        native_scene_candidate,
+        original_runtime_available: runtime_available,
+        notes,
     })
 }
 
@@ -296,8 +377,11 @@ pub fn inspect_source_game(input: &Path) -> Result<SourceGameInspection, String>
 /// Never invoke shell interpreters, unknown binaries found inside imported
 /// folders, downloaded executables, or reconstructed code from source.
 pub fn validate_godot_binary(path: &Path) -> Result<PathBuf, String> {
-    let name = path.file_name()
-        .and_then(OsStr::to_str).unwrap_or("").to_ascii_lowercase();
+    let name = path
+        .file_name()
+        .and_then(OsStr::to_str)
+        .unwrap_or("")
+        .to_ascii_lowercase();
     if !name.starts_with("godot") {
         return Err("Choose the Godot editor executable, not an arbitrary program".into());
     }
@@ -310,7 +394,9 @@ pub fn validate_godot_binary(path: &Path) -> Result<PathBuf, String> {
 }
 
 pub fn launch_source_game_with(
-    root: &Path, edit: bool, chosen_runtime: Option<&Path>
+    root: &Path,
+    edit: bool,
+    chosen_runtime: Option<&Path>,
 ) -> Result<Child, String> {
     let inspection = inspect_source_game(root)?;
     if inspection.engine != "Godot" || inspection.main_scene.is_none() {
@@ -319,13 +405,17 @@ pub fn launch_source_game_with(
     let godot = if let Some(chosen) = chosen_runtime {
         validate_godot_binary(chosen)?
     } else {
-        find_godot_runtime().ok_or(
-            "Godot was not found; choose it from Hub or set KAIRO_GODOT_EXECUTABLE")?
+        find_godot_runtime()
+            .ok_or("Godot was not found; choose it from Hub or set KAIRO_GODOT_EXECUTABLE")?
     };
     let mut command = Command::new(godot);
     command.arg("--path").arg(&inspection.root);
-    if edit { command.arg("--editor"); }
-    command.spawn().map_err(|e| format!("Cannot launch original Godot game: {e}"))
+    if edit {
+        command.arg("--editor");
+    }
+    command
+        .spawn()
+        .map_err(|e| format!("Cannot launch original Godot game: {e}"))
 }
 
 pub fn launch_source_game(root: &Path, edit: bool) -> Result<Child, String> {
@@ -335,13 +425,19 @@ pub fn launch_source_game(root: &Path, edit: bool) -> Result<Child, String> {
 /// Native conversion is explicitly LIMITED to a portable 3D scene. There is no
 /// script, logic, physics, UI, audio behaviour or pixel-game translation.
 pub fn reconstruct_native_scene(
-    root: &Path, display_name: &str, engine_version: &str
+    root: &Path,
+    display_name: &str,
+    engine_version: &str,
 ) -> Result<PathBuf, String> {
     let info = inspect_source_game(root)?;
     let path = info.native_scene_candidate.ok_or(
         "This game has no unambiguous portable 3D scene; Kairo cannot reconstruct its gameplay. For a 2D Godot game, use Run Original instead")?;
     crate::project::import_external_gltf_directory(
-        &info.root, Some(&path), display_name, engine_version)
+        &info.root,
+        Some(&path),
+        display_name,
+        engine_version,
+    )
 }
 
 #[cfg(test)]
@@ -351,7 +447,11 @@ mod tests {
     fn game(root: &Path) {
         fs::write(root.join("project.godot"),
             "config_version=5\n[application]\nconfig/name=\"Platform Runner\"\nrun/main_scene=\"res://main.tscn\"\n").unwrap();
-        fs::write(root.join("main.tscn"), "[gd_scene format=3]\n[node name=\"Main\" type=\"Node2D\"]\n").unwrap();
+        fs::write(
+            root.join("main.tscn"),
+            "[gd_scene format=3]\n[node name=\"Main\" type=\"Node2D\"]\n",
+        )
+        .unwrap();
         fs::write(root.join("player.gd"), "extends CharacterBody2D\n").unwrap();
     }
 
@@ -387,11 +487,18 @@ mod tests {
         game(dir.path());
         fs::create_dir_all(dir.path().join("ProjectSettings")).unwrap();
         fs::create_dir_all(dir.path().join("Assets")).unwrap();
-        fs::write(dir.path().join("ProjectSettings/ProjectVersion.txt"), "m_EditorVersion: 2022.3").unwrap();
+        fs::write(
+            dir.path().join("ProjectSettings/ProjectVersion.txt"),
+            "m_EditorVersion: 2022.3",
+        )
+        .unwrap();
         assert!(inspect_source_game(dir.path()).is_err());
         fs::remove_file(dir.path().join("ProjectSettings/ProjectVersion.txt")).unwrap();
-        fs::write(dir.path().join("project.godot"),
-            "config_version=5\n[application]\nrun/main_scene=\"res://../secret.tscn\"\n").unwrap();
+        fs::write(
+            dir.path().join("project.godot"),
+            "config_version=5\n[application]\nrun/main_scene=\"res://../secret.tscn\"\n",
+        )
+        .unwrap();
         let info = inspect_source_game(dir.path()).unwrap();
         assert!(info.main_scene.is_none());
         assert!(!info.original_runtime_available);
@@ -402,8 +509,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir_all(dir.path().join("ProjectSettings")).unwrap();
         fs::create_dir_all(dir.path().join("Assets/Scenes")).unwrap();
-        fs::write(dir.path().join("ProjectSettings/ProjectVersion.txt"),
-            "m_EditorVersion: 2022.3.62f1").unwrap();
+        fs::write(
+            dir.path().join("ProjectSettings/ProjectVersion.txt"),
+            "m_EditorVersion: 2022.3.62f1",
+        )
+        .unwrap();
         fs::write(dir.path().join("Assets/Scenes/Level.unity"), "%YAML 1.1").unwrap();
         fs::write(dir.path().join("Assets/Player.cs"), "class Player {}").unwrap();
         let info = inspect_source_game(dir.path()).unwrap();
@@ -441,7 +551,11 @@ mod tests {
         let info = inspect_source_game(dir.path()).unwrap();
         assert!(info.native_scene_candidate.is_none());
         fs::remove_file(dir.path().join("main.tscn")).unwrap();
-        symlink(outside.path().join("hidden.glb"), dir.path().join("main.tscn")).unwrap();
+        symlink(
+            outside.path().join("hidden.glb"),
+            dir.path().join("main.tscn"),
+        )
+        .unwrap();
         let info = inspect_source_game(dir.path()).unwrap();
         assert!(info.main_scene.is_none());
     }
