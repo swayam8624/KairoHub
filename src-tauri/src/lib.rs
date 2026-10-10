@@ -55,7 +55,16 @@ fn register_discovered_engine(state: &mut HubState) {
             state.engine_roots.push(root.clone());
         }
         if state.selected_engine.is_none() {
-            state.selected_engine = Some(root);
+            state.selected_engine = Some(root.clone());
+        }
+        // Show a real playable native project on first launch when the
+        // C++ engine workspace is already present. Never create demo files,
+        // change third-party projects or register an unvalidated fixture.
+        let playable = root.join("Samples/PlayableVerticalSlice/Project.kproject");
+        if project::inspect_project(&playable).is_valid()
+            && !state.recent_projects.contains(&playable)
+        {
+            state.remember(playable);
         }
     }
 }
