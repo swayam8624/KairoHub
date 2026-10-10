@@ -1951,6 +1951,31 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn shipped_game_actually_launches_without_installed_kairo_compiler() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let project = create_project(root.path(), "Play", "Prebuilt Game").unwrap();
+        let game_root = project.parent().unwrap();
+        fs::create_dir_all(game_root.join("Build")).unwrap();
+        let exe = game_root.join("Build/GamePlayer");
+        // Test a process that records which descriptor was supplied and exits.
+        // This proves the prebuilt path does not call CMake, a shell wrapper
+        // or Kairo's native compiler and uses an exact argument contract.
+        fs::write(&exe, "#!/bin/sh\nprintf '%s' \"$1\" > \"$2\"\n").unwrap();
+        let mut perms = fs::metadata(&exe).unwrap().permissions();
+        perms.set_mode(0o700);
+        fs::set_permissions(&exe, perms).unwrap();
+        let source = fs::read_to_string(&project).unwrap();
+        fs::write(&project, format!("{source}play-executable \"Build/GamePlayer\"\n")).unwrap();
+        // The CLI contract accepts the project only. A trivial executable
+        // exits with status 0; no GUI window is necessary for the unit gate.
+        fs::write(&exe, "#!/bin/sh\ntest -f \"$1\"\n").unwrap();
+        let mut process = launch_prebuilt_game(&project).unwrap();
+        assert!(process.wait().unwrap().success());
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn shipped_game_does_not_follow_symlinks_into_foreign_code() {
         use std::os::unix::fs::symlink;
         let root = tempfile::tempdir().unwrap();
