@@ -1,6 +1,7 @@
 pub mod project;
 pub mod source_game;
 pub mod source_game_graph;
+pub mod source_game_migration;
 
 use project::{EngineInstallation, HubState, PackageArtifact, ProjectHealth, RecoverySnapshotInfo};
 use std::fs;
@@ -263,6 +264,11 @@ fn inspect_source_game_graph(root: PathBuf) -> Result<source_game_graph::GodotSc
 }
 
 #[tauri::command]
+fn plan_source_game_migration(root: PathBuf) -> Result<source_game_migration::GodotMigrationPlan, String> {
+    source_game_migration::plan_godot_migration(&root)
+}
+
+#[tauri::command]
 fn link_source_game(root: PathBuf, state: State<'_, ManagedHubState>) -> Result<HubState, String> {
     let inspection = source_game::inspect_source_game(&root)?;
     let mut value = state
@@ -474,6 +480,7 @@ pub fn run() {
             import_external_gltf_project,
             inspect_source_game,
             inspect_source_game_graph,
+            plan_source_game_migration,
             link_source_game,
             register_godot_runtime,
             launch_source_game,
