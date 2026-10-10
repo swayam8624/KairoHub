@@ -89,3 +89,39 @@ jobs:
           assert any("GDScript" in issue for issue in graph["unsupportedBehaviors"]), graph
           print("REAL SCENE GRAPH PASSED: nodes/resources/signals preserved; unsupported gameplay explicitly flagged")
           PY
+
+  original-game-baseline:
+    name: Run real Godot game on original engine (not Kairo)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Fetch legally redistributable official 2D game source
+        shell: bash
+        run: |
+          git clone --filter=blob:none --sparse --no-checkout \
+            https://github.com/godotengine/godot-demo-projects.git "$RUNNER_TEMP/godot-demo"
+          git -C "$RUNNER_TEMP/godot-demo" sparse-checkout set 2d/dodge_the_creeps
+          git -C "$RUNNER_TEMP/godot-demo" fetch --no-tags origin \
+            b761b4cd5718a7118f2c95eb55f181d0a5f004f1
+          git -C "$RUNNER_TEMP/godot-demo" checkout --detach \
+            b761b4cd5718a7118f2c95eb55f181d0a5f004f1
+
+      - name: Install pinned and checksum-verified Godot 4.7.2
+        shell: bash
+        run: |
+          curl -fsSL --retry 3 --max-time 240 \
+            https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip \
+            -o "$RUNNER_TEMP/godot.zip"
+          echo "cadd3204e728a35d3f13adb7fd0d7902636b79f6b95c40c265eb73b6c35329e4  $RUNNER_TEMP/godot.zip" | sha256sum --check
+          unzip -q "$RUNNER_TEMP/godot.zip" -d "$RUNNER_TEMP"
+          chmod +x "$RUNNER_TEMP/Godot_v4.7.2-stable_linux.x86_64"
+          "$RUNNER_TEMP/Godot_v4.7.2-stable_linux.x86_64" --version
+
+      - name: Import real game and run 120 simulation frames headlessly
+        shell: bash
+        run: |
+          GAME="$RUNNER_TEMP/godot-demo/2d/dodge_the_creeps"
+          GODOT="$RUNNER_TEMP/Godot_v4.7.2-stable_linux.x86_64"
+          timeout 120 "$GODOT" --headless --path "$GAME" --import --quit
+          timeout 40 "$GODOT" --headless --path "$GAME" --quit-after 120
+          echo "REAL ORIGINAL GAME EXECUTION: PASS (Godot runtime, not KairoPlayer)"
