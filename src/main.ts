@@ -359,7 +359,7 @@ function renderSourceGames(): void {
     const canConvert = info.nativeSceneCandidates.length > 0;
     const note = info.notes[0] ?? 'Source project detected';
     const escapedRoot = escapeHtml(root);
-    const disabledPlay = info.engine === "Godot" && info.mainScene ? "" : 'disabled title="Only Godot games with a startup scene can run through the original engine"';
+    const disabledPlay = canPlay ? "" : 'disabled title="Only Godot games with a startup scene can run through the original engine"';
     const disabledConvert = canConvert ? '' : 'disabled title="No single portable 3D scene"';
     return '<article class="project-row source-row" data-source-root="' + escapedRoot + '">'
       + '<div class="project-glyph">' + escapeHtml(info.engine.slice(0, 1)) + '</div>'
