@@ -607,6 +607,70 @@ mod tests {
     }
 
     #[test]
+    fn godot_uid_entry_scene_resolves_to_safe_project_owned_text_scene() {
+        let dir = tempfile::tempdir().unwrap();
+        game(dir.path());
+        fs::write(dir.path().join("project.godot"),
+            "config_version=5\n[application]\nrun/main_scene=\"uid://abc123\"\n").unwrap();
+        fs::create_dir_all(dir.path().join("Levels")).unwrap();
+        fs::write(dir.path().join("Levels/Start.tscn"),
+            "[gd_scene format=3 uid=\"uid://abc123\"]\n[node name=\"Start\" type=\"Node2D\"]\n").unwrap();
+        let info = inspect_source_game(dir.path()).unwrap();
+        assert_eq!(info.main_scene.as_deref(), Some("res://Levels/Start.tscn"));
+        // Resolving to a concrete path also enables the structural game graph.
+        let graph = crate::source_game_graph::inspect_godot_graph(dir.path()).unwrap();
+        assert_eq!(graph.source_scene, "res://Levels/Start.tscn");
+        assert_eq!(graph.nodes[0].name, "Start");
+    }
+
+    #[test]
+    fn godot_uid_duplicate_or_missing_entries_fail_closed() {
+        let dir = tempfile::tempdir().unwrap();
+        game(dir.path());
+        fs::write(dir.path().join("project.godot"),
+            "config_version=5\n[application]\nrun/main_scene=\"uid://abc123\"\n").unwrap();
+        let scene = "[gd_scene uid=\"uid://abc123\" format=3]\n[node name=\"Main\" type=\"Node2D\"]\n";
+        fs::write(dir.path().join("main.tscn"), scene).unwrap();
+        fs::write(dir.path().join("duplicate.tscn"), scene).unwrap();
+        let info = inspect_source_game(dir.path()).unwrap();
+        assert!(info.main_scene.is_none());
+        assert!(info.notes.iter().any(|s| s.contains("ambiguous")));
+        fs::remove_file(dir.path().join("duplicate.tscn")).unwrap();
+        fs::write(dir.path().join("project.godot"),
+            "config_version=5\n[application]\nrun/main_scene=\"uid://missing\"\n").unwrap();
+        let info = inspect_source_game(dir.path()).unwrap();
+        assert!(info.main_scene.is_none());
+        assert!(info.notes.iter().any(|s| s.contains("not found")));
+    }
+
+    #[test]
+    fn choose_one_of_multiple_source_owned_3d_scenes_explicitly() {
+        let dir = tempfile::tempdir().unwrap();
+        game(dir.path());
+        fs::create_dir_all(dir.path().join("models")).unwrap();
+        for name in ["a.gltf", "b.gltf"] {
+            fs::write(dir.path().join("models").join(name),
+                "{\"asset\":{\"version\":\"2.0\"}}").unwrap();
+        }
+        let info = inspect_source_game(dir.path()).unwrap();
+        assert_eq!(info.native_scene_candidate, None);
+        assert_eq!(info.native_scene_candidates,
+            ["models/a.gltf".to_owned(), "models/b.gltf".to_owned()]);
+        assert!(reconstruct_native_scene_selected(dir.path(), "Demo", "0.1.0",
+            Some("../outside.gltf")).is_err());
+        assert!(reconstruct_native_scene_selected(dir.path(), "Demo", "0.1.0",
+            Some("models/absent.gltf")).is_err());
+        let imported = reconstruct_native_scene_selected(dir.path(), "Demo", "0.1.0",
+            Some("models/b.gltf")).unwrap();
+        assert!(imported.ends_with("KairoImported.kproject"));
+        let manifest = fs::read_to_string(dir.path().join(".kairo/Assets.kassets")).unwrap();
+        assert!(manifest.contains("models/b.gltf"));
+        // Never replace an existing author's generated project on repeat import.
+        assert!(reconstruct_native_scene_selected(dir.path(), "Demo", "0.1.0",
+            Some("models/a.gltf")).is_err());
+    }
+
+    #[test]
     fn unity_project_is_inspected_without_pretending_to_run_csharp() {
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir_all(dir.path().join("ProjectSettings")).unwrap();
