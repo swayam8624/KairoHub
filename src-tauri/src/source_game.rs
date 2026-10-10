@@ -295,17 +295,41 @@ pub fn inspect_source_game(input: &Path) -> Result<SourceGameInspection, String>
 /// Launch only a recognized Godot SOURCE project through its original engine.
 /// Never invoke shell interpreters, unknown binaries found inside imported
 /// folders, downloaded executables, or reconstructed code from source.
-pub fn launch_source_game(root: &Path, edit: bool) -> Result<Child, String> {
+pub fn validate_godot_binary(path: &Path) -> Result<PathBuf, String> {
+    let name = path.file_name()
+        .and_then(OsStr::to_str).unwrap_or("").to_ascii_lowercase();
+    if !name.starts_with("godot") {
+        return Err("Choose the Godot editor executable, not an arbitrary program".into());
+    }
+    let info = fs::symlink_metadata(path)
+        .map_err(|error| format!("Cannot inspect Godot executable: {error}"))?;
+    if !info.is_file() || info.file_type().is_symlink() {
+        return Err("Godot executable must be a real, existing file".into());
+    }
+    fs::canonicalize(path).map_err(|error| error.to_string())
+}
+
+pub fn launch_source_game_with(
+    root: &Path, edit: bool, chosen_runtime: Option<&Path>
+) -> Result<Child, String> {
     let inspection = inspect_source_game(root)?;
     if inspection.engine != "Godot" || inspection.main_scene.is_none() {
         return Err("Only Godot source projects with a validated startup scene can launch in this version; Unity/Unreal migration is analysis-only".into());
     }
-    let godot = find_godot_runtime().ok_or(
-        "Godot executable was not found; install Godot or set KAIRO_GODOT_EXECUTABLE")?;
+    let godot = if let Some(chosen) = chosen_runtime {
+        validate_godot_binary(chosen)?
+    } else {
+        find_godot_runtime().ok_or(
+            "Godot was not found; choose it from Hub or set KAIRO_GODOT_EXECUTABLE")?
+    };
     let mut command = Command::new(godot);
     command.arg("--path").arg(&inspection.root);
     if edit { command.arg("--editor"); }
     command.spawn().map_err(|e| format!("Cannot launch original Godot game: {e}"))
+}
+
+pub fn launch_source_game(root: &Path, edit: bool) -> Result<Child, String> {
+    launch_source_game_with(root, edit, None)
 }
 
 /// Native conversion is explicitly LIMITED to a portable 3D scene. There is no
