@@ -37,6 +37,8 @@ type ProjectHealth = {
 
 type HubState = {
   recentProjects: string[];
+  sourceGames: string[];
+  godotExecutable: string | null;
   favorites: string[];
   engineRoots: string[];
   selectedEngine: string | null;
@@ -51,6 +53,28 @@ type EngineInstallation = {
   projectCompilerAvailable: boolean;
   player: string;
   playerAvailable: boolean;
+};
+
+type SourceGameGraph = {
+  sourceScene: string;
+  nodes: { name: string; parent: string; nodeType: string; instanceResource: string | null; scriptResource: string | null }[];
+  resources: { id: string; resourceType: string; path: string }[];
+  signals: { signal: string; from: string; to: string; method: string }[];
+  unsupportedBehaviors: string[];
+};
+
+type SourceGameInspection = {
+  root: string;
+  engine: "Godot" | "Unity" | "Unreal";
+  displayName: string;
+  mainScene: string | null;
+  sceneFiles: number;
+  scriptFiles: number;
+  mediaFiles: number;
+  scannedFiles: number;
+  nativeSceneCandidate: string | null;
+  originalRuntimeAvailable: boolean;
+  notes: string[];
 };
 
 type RecoverySnapshotInfo = {
@@ -81,6 +105,7 @@ app.innerHTML = `
         <div class="header-actions">
           <button id="clone-button" class="button secondary" type="button">Clone Kairo</button>
           <button id="external-import-button" class="button secondary" type="button">Import glTF repo</button>
+          <button id="source-game-button" class="button secondary" type="button">Add existing game</button>
           <button id="import-folder-button" class="button secondary" type="button">Import folder</button>
           <button id="import-button" class="button secondary" type="button">Import .kproject</button>
           <button id="create-button" class="button primary" type="button">New project</button>
@@ -92,8 +117,12 @@ app.innerHTML = `
         <div><span id="attention-count">0</span><small>Need attention</small></div>
       </section>
       <section class="project-section">
-        <div class="section-heading"><h2>Recent</h2><input id="project-filter" type="search" placeholder="Filter projects" aria-label="Filter projects" /></div>
+        <div class="section-heading"><h2>Kairo projects</h2><input id="project-filter" type="search" placeholder="Filter games" aria-label="Filter games" /></div>
         <div id="project-list" class="project-list" aria-live="polite"></div>
+      </section>
+      <section class="project-section source-section" aria-label="Linked original games">
+        <div class="section-heading"><h2>Games from other engines</h2><button id="choose-godot" class="button secondary" type="button">Choose Godot executable</button></div>
+        <div id="source-game-list" class="project-list" aria-live="polite"></div>
       </section>
     </main>
   </div>
@@ -134,6 +163,14 @@ app.innerHTML = `
       <div class="dialog-actions"><button value="cancel" class="button secondary">Cancel</button><button id="confirm-external-import" value="default" class="button primary">Clone and convert</button></div>
     </form>
   </dialog>
+  <dialog id="game-inspection-dialog" class="wide-dialog">
+    <div class="dialog-form">
+      <div><p class="eyebrow">Compatibility report</p><h2 id="game-inspection-title">Game analysis</h2></div>
+      <div id="game-inspection-details" class="game-inspection-details"></div>
+      <p class="field-note">Run original is not a Kairo-native conversion. Native scene import preserves only portable 3D content, not other engines’ gameplay scripts.</p>
+      <div class="dialog-actions"><button id="close-game-inspection" class="button primary" type="button">Done</button></div>
+    </div>
+  </dialog>
   <dialog id="engine-dialog">
     <div class="dialog-form">
       <div><p class="eyebrow">Toolchain</p><h2>Kairo installations</h2></div>
@@ -163,6 +200,8 @@ app.innerHTML = `
 `;
 
 const projectList = document.querySelector<HTMLDivElement>("#project-list")!;
+const sourceGameList = document.querySelector<HTMLDivElement>("#source-game-list")!;
+const gameInspectionDialog = document.querySelector<HTMLDialogElement>("#game-inspection-dialog")!;
 const projectFilter = document.querySelector<HTMLInputElement>("#project-filter")!;
 const importDialog = document.querySelector<HTMLDialogElement>("#import-dialog")!;
 const createDialog = document.querySelector<HTMLDialogElement>("#create-dialog")!;
@@ -174,7 +213,9 @@ const packageDialog = document.querySelector<HTMLDialogElement>("#package-dialog
 const packageProfile = document.querySelector<HTMLSelectElement>("#package-profile")!;
 const packageDestination = document.querySelector<HTMLParagraphElement>("#package-destination")!;
 const toast = document.querySelector<HTMLDivElement>("#toast")!;
-let state: HubState = { recentProjects: [], favorites: [], engineRoots: [], selectedEngine: null };
+let state: HubState = { recentProjects: [], sourceGames: [], godotExecutable: null, favorites: [], engineRoots: [], selectedEngine: null };
+let sourceGamesByRoot = new Map<string, SourceGameInspection>();
+let sourceGameErrors = new Map<string, string>();
 let healthByPath = new Map<string, ProjectHealth>();
 let engines: EngineInstallation[] = [];
 let recoveryProject = "";
@@ -278,10 +319,89 @@ function renderProjects(): void {
       <button class="icon-button favorite ${favorite ? "selected" : ""}" type="button" data-action="favorite" aria-label="${favorite ? "Remove from favorites" : "Add to favorites"}">★</button>
       <button class="button secondary" type="button" data-action="${valid ? "recovery" : "repair"}">${valid ? "Recovery" : "Repair"}</button>
       <button class="button secondary" type="button" data-action="package" ${valid ? "" : "disabled"}>Package</button>
-      <button class="button secondary" type="button" data-action="run" ${valid ? "" : "disabled"}>Run</button>
-      <button class="button primary" type="button" data-action="open" ${valid ? "" : "disabled"}>Open editor</button>
+      <button class="button primary" type="button" data-action="run" ${valid ? "" : "disabled"}>▶ Run game</button>
+      <button class="button secondary" type="button" data-action="open" ${valid ? "" : "disabled"}>Edit project</button>
     </article>`;
   }).join("");
+}
+
+function renderSourceGames(): void {
+  const query = projectFilter.value.trim().toLocaleLowerCase();
+  const roots = state.sourceGames.filter((root) => {
+    const info = sourceGamesByRoot.get(root);
+    return !query || root.toLocaleLowerCase().includes(query) ||
+      (info?.displayName.toLocaleLowerCase().includes(query) ?? false);
+  });
+  if (!roots.length) {
+    sourceGameList.innerHTML = '<div class="compact-empty">Add a local Godot, Unity or Unreal source-game folder. Your original files are not copied or modified.</div>';
+    return;
+  }
+  sourceGameList.innerHTML = roots.map((root) => {
+    const info = sourceGamesByRoot.get(root);
+    const error = sourceGameErrors.get(root);
+    if (!info) return '<div class="compact-empty">' + escapeHtml(error ?? 'Inspecting ' + root) + '</div>';
+    const canPlay = info.engine === "Godot" && Boolean(info.mainScene) &&
+      (info.originalRuntimeAvailable || Boolean(state.godotExecutable));
+    const canConvert = Boolean(info.nativeSceneCandidate);
+    const note = info.notes[0] ?? 'Source project detected';
+    const escapedRoot = escapeHtml(root);
+    const disabledPlay = canPlay ? '' : 'disabled title="Godot executable or startup scene unavailable"';
+    const disabledConvert = canConvert ? '' : 'disabled title="No single portable 3D scene"';
+    return '<article class="project-row source-row" data-source-root="' + escapedRoot + '">'
+      + '<div class="project-glyph">' + escapeHtml(info.engine.slice(0, 1)) + '</div>'
+      + '<div class="project-info"><div><strong>' + escapeHtml(info.displayName)
+      + '</strong><span class="health warning">' + escapeHtml(info.engine) + ' source</span></div>'
+      + '<small>' + escapedRoot + '</small><p>' + escapeHtml(note) + '</p></div>'
+      + '<button class="button secondary" type="button" data-source-action="inspect">Inspect</button>'
+      + '<button class="button secondary" type="button" data-source-action="convert" ' + disabledConvert + '>Convert 3D scene</button>'
+      + '<button class="button secondary" type="button" data-source-action="edit" ' + disabledPlay + '>Original editor</button>'
+      + '<button class="button primary" type="button" data-source-action="play" ' + disabledPlay + '>▶ Run original</button>'
+      + '</article>';
+  }).join('');
+}
+
+async function showSourceInspection(info: SourceGameInspection): Promise<void> {
+  document.querySelector("#game-inspection-title")!.textContent = info.displayName;
+  const properties = [
+    ["Engine", info.engine],
+    ["Startup scene", info.mainScene ?? "Not resolved"],
+    ["Scene files", String(info.sceneFiles)],
+    ["Script files", String(info.scriptFiles)],
+    ["Media files", String(info.mediaFiles)],
+    ["Kairo-compatible 3D scene", info.nativeSceneCandidate ?? "None"],
+    ["Original engine executable", info.originalRuntimeAvailable ? "Available" : "Unavailable"],
+  ];
+  document.querySelector("#game-inspection-details")!.innerHTML = properties.map(([key, value]) =>
+    '<div><strong>' + escapeHtml(key) + '</strong><span>' + escapeHtml(value) + '</span></div>'
+  ).join('') + '<p>' + info.notes.map(escapeHtml).join(' · ') + '</p>';
+  gameInspectionDialog.showModal();
+  if (info.engine !== "Godot" || !info.mainScene) return;
+  try {
+    const graph = await invoke<SourceGameGraph>("inspect_source_game_graph", { root: info.root });
+    const graphDetail = '<p><strong>Scene graph:</strong> ' + graph.nodes.length + ' nodes, '
+      + graph.resources.length + ' external resources, ' + graph.signals.length + ' signal connections</p>'
+      + '<p><strong>Node structure:</strong> ' + graph.nodes.slice(0, 16)
+        .map((node) => escapeHtml(node.name + ' (' + node.nodeType + ')')).join(', ')
+      + (graph.nodes.length > 16 ? ', ...' : '') + '</p>'
+      + '<p><strong>Migration gaps:</strong> ' + graph.unsupportedBehaviors.map(escapeHtml).join(' · ') + '</p>';
+    document.querySelector("#game-inspection-details")!.insertAdjacentHTML("beforeend", graphDetail);
+  } catch (error) {
+    document.querySelector("#game-inspection-details")!.insertAdjacentHTML("beforeend",
+      '<p>Scene graph detail unavailable: ' + escapeHtml(String(error)) + '</p>');
+  }
+}
+
+async function refreshSourceGames(): Promise<void> {
+  sourceGamesByRoot = new Map();
+  sourceGameErrors = new Map();
+  renderSourceGames();
+  await Promise.all(state.sourceGames.map(async (root) => {
+    try {
+      const inspected = await invoke<SourceGameInspection>("inspect_source_game", { root });
+      sourceGamesByRoot.set(root, inspected);
+    } catch (error) { sourceGameErrors.set(root, String(error)); }
+    renderSourceGames();
+  }));
 }
 
 function renderEngines(): void {
@@ -309,7 +429,7 @@ async function loadState(): Promise<void> {
   state = await invoke<HubState>("hub_state");
   engines = await invoke<EngineInstallation[]>("engine_installations");
   renderEngines();
-  await refreshHealth();
+  await Promise.all([refreshHealth(), refreshSourceGames()]);
 }
 
 document.querySelector("#import-button")!.addEventListener("click", () => importDialog.showModal());
@@ -323,13 +443,33 @@ document.querySelector("#import-folder-button")!.addEventListener("click", async
     notify(`Project imported from folder: ${project}`);
   } catch (error) { notify(String(error), true); }
 });
+document.querySelector("#choose-godot")!.addEventListener("click", async () => {
+  const executable = await open({ multiple: false, directory: false, title: "Select the Godot editor executable" });
+  if (!executable) return;
+  try {
+    state = await invoke<HubState>("register_godot_runtime", { executable });
+    renderSourceGames();
+    notify("Godot executable saved. Linked Godot games can now be run from the Hub.");
+  } catch (error) { notify(String(error), true); }
+});
+
+document.querySelector("#source-game-button")!.addEventListener("click", async () => {
+  const root = await open({ multiple: false, directory: true, title: "Choose a source-game folder" });
+  if (!root) return;
+  try {
+    state = await invoke<HubState>("link_source_game", { root });
+    await refreshSourceGames();
+    notify("Game linked. Check its compatibility report before conversion.");
+  } catch (error) { notify(String(error), true); }
+});
+document.querySelector("#close-game-inspection")!.addEventListener("click", () => gameInspectionDialog.close());
 document.querySelector("#create-button")!.addEventListener("click", () => createDialog.showModal());
 document.querySelector("#clone-button")!.addEventListener("click", () => cloneDialog.showModal());
 document.querySelector("#external-import-button")!.addEventListener("click", () => externalImportDialog.showModal());
 document.querySelector("#engine-button")!.addEventListener("click", () => document.querySelector<HTMLDialogElement>("#engine-dialog")!.showModal());
 document.querySelector("#close-engine")!.addEventListener("click", () => document.querySelector<HTMLDialogElement>("#engine-dialog")!.close());
 document.querySelector("#close-recovery")!.addEventListener("click", () => recoveryDialog.close());
-projectFilter.addEventListener("input", renderProjects);
+projectFilter.addEventListener("input", () => { renderProjects(); renderSourceGames(); });
 packageProfile.addEventListener("change", updatePackageDestination);
 
 document.querySelector("#browse-project")!.addEventListener("click", async () => {
@@ -483,6 +623,30 @@ projectList.addEventListener("click", async (event) => {
       notify(`KairoEditor launched (process ${processId})`);
     }
   } catch (error) { notify(String(error), true); }
+});
+
+sourceGameList.addEventListener("click", async (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-source-action]");
+  const row = button?.closest<HTMLElement>("[data-source-root]");
+  if (!button || !row) return;
+  const root = row.dataset.sourceRoot!;
+  const action = button.dataset.sourceAction;
+  const info = sourceGamesByRoot.get(root);
+  if (!info) return;
+  if (action === "inspect") { await showSourceInspection(info); return; }
+  button.disabled = true;
+  try {
+    if (action === "play" || action === "edit") {
+      const pid = await invoke<number>("launch_source_game", { root, edit: action === "edit" });
+      notify("Original " + info.engine + " launched (process " + pid + "). Not Kairo-native gameplay.");
+    } else if (action === "convert") {
+      const project = await invoke<string>("reconstruct_source_game", { root });
+      state = await invoke<HubState>("hub_state");
+      await refreshHealth();
+      notify("Kairo 3D scene imported: " + project + ". Gameplay code is not converted.");
+    }
+  } catch (error) { notify(String(error), true); }
+  finally { button.disabled = false; }
 });
 
 recoveryList.addEventListener("click", async (event) => {

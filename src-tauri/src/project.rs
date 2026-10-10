@@ -1746,12 +1746,23 @@ pub fn validate_project_engine_version(
 #[serde(default)]
 pub struct HubState {
     pub recent_projects: Vec<PathBuf>,
+    /// Linked original-engine source games are not Kairo project descriptors.
+    /// Keep their catalogue separate so Run never accidentally invokes KairoPlayer.
+    pub source_games: Vec<PathBuf>,
+    /// Optional Godot editor explicitly selected by the user in the Hub GUI.
+    pub godot_executable: Option<PathBuf>,
     pub favorites: BTreeSet<PathBuf>,
     pub engine_roots: Vec<PathBuf>,
     pub selected_engine: Option<PathBuf>,
 }
 
 impl HubState {
+    pub fn remember_source_game(&mut self, root: PathBuf) {
+        self.source_games.retain(|existing| existing != &root);
+        self.source_games.insert(0, root);
+        self.source_games.truncate(24);
+    }
+
     pub fn remember(&mut self, project: PathBuf) {
         self.recent_projects.retain(|existing| existing != &project);
         self.recent_projects.insert(0, project);
