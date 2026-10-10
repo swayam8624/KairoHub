@@ -1,0 +1,50 @@
+name: Package KairoHub desktop application
+
+# Manual release engineering only. The Hub is NOT a bundled engine:
+# desktop packages require an existing separately built KairoGameEngine.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Package ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 70
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-2022]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Install pinned frontend dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build macOS Hub application
+        if: runner.os == 'macOS'
+        run: npm run tauri build -- --bundles app,dmg
+
+      - name: Build Windows Hub installer
+        if: runner.os == 'Windows'
+        run: npm run tauri build -- --bundles nsis
+
+      - name: Upload unsigned Hub desktop build
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: KairoHub-${{ runner.os }}-unsigned
+          path: |
+            src-tauri/target/release/bundle/
+          if-no-files-found: warn
