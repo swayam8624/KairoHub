@@ -75,3 +75,17 @@ jobs:
           assert report["nativeSceneCandidate"] is None, report
           print("REAL GAME INTAKE PASSED: Godot source inspected; native GDScript migration is not claimed")
           PY
+          cargo run --quiet --locked --manifest-path src-tauri/Cargo.toml \
+            --bin kairo-hub-inspect-game -- \
+            "$RUNNER_TEMP/kairo-godot-demo/2d/dodge_the_creeps" --graph > "$RUNNER_TEMP/game-graph.json"
+          python3 - "$RUNNER_TEMP/game-graph.json" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding="utf-8") as file:
+              graph = json.load(file)
+          assert graph["sourceScene"] == "res://main.tscn", graph
+          assert len(graph["nodes"]) >= 10, graph
+          assert len(graph["signals"]) >= 5, graph
+          assert len(graph["resources"]) >= 6, graph
+          assert any("GDScript" in issue for issue in graph["unsupportedBehaviors"]), graph
+          print("REAL SCENE GRAPH PASSED: nodes/resources/signals preserved; unsupported gameplay explicitly flagged")
+          PY
