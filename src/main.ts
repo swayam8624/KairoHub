@@ -54,6 +54,14 @@ type EngineInstallation = {
   playerAvailable: boolean;
 };
 
+type SourceGameGraph = {
+  sourceScene: string;
+  nodes: { name: string; parent: string; nodeType: string; instanceResource: string | null; scriptResource: string | null }[];
+  resources: { id: string; resourceType: string; path: string }[];
+  signals: { signal: string; from: string; to: string; method: string }[];
+  unsupportedBehaviors: string[];
+};
+
 type SourceGameInspection = {
   root: string;
   engine: "Godot" | "Unity" | "Unreal";
@@ -350,7 +358,7 @@ function renderSourceGames(): void {
   }).join('');
 }
 
-function showSourceInspection(info: SourceGameInspection): void {
+async function showSourceInspection(info: SourceGameInspection): Promise<void> {
   document.querySelector("#game-inspection-title")!.textContent = info.displayName;
   const properties = [
     ["Engine", info.engine],
@@ -365,6 +373,20 @@ function showSourceInspection(info: SourceGameInspection): void {
     '<div><strong>' + escapeHtml(key) + '</strong><span>' + escapeHtml(value) + '</span></div>'
   ).join('') + '<p>' + info.notes.map(escapeHtml).join(' · ') + '</p>';
   gameInspectionDialog.showModal();
+  if (info.engine !== "Godot" || !info.mainScene) return;
+  try {
+    const graph = await invoke<SourceGameGraph>("inspect_source_game_graph", { root: info.root });
+    const graphDetail = '<p><strong>Scene graph:</strong> ' + graph.nodes.length + ' nodes, '
+      + graph.resources.length + ' external resources, ' + graph.signals.length + ' signal connections</p>'
+      + '<p><strong>Node structure:</strong> ' + graph.nodes.slice(0, 16)
+        .map((node) => escapeHtml(node.name + ' (' + node.nodeType + ')')).join(', ')
+      + (graph.nodes.length > 16 ? ', ...' : '') + '</p>'
+      + '<p><strong>Migration gaps:</strong> ' + graph.unsupportedBehaviors.map(escapeHtml).join(' · ') + '</p>';
+    document.querySelector("#game-inspection-details")!.insertAdjacentHTML("beforeend", graphDetail);
+  } catch (error) {
+    document.querySelector("#game-inspection-details")!.insertAdjacentHTML("beforeend",
+      '<p>Scene graph detail unavailable: ' + escapeHtml(String(error)) + '</p>');
+  }
 }
 
 async function refreshSourceGames(): Promise<void> {
@@ -599,7 +621,7 @@ sourceGameList.addEventListener("click", async (event) => {
   const action = button.dataset.sourceAction;
   const info = sourceGamesByRoot.get(root);
   if (!info) return;
-  if (action === "inspect") { showSourceInspection(info); return; }
+  if (action === "inspect") { await showSourceInspection(info); return; }
   button.disabled = true;
   try {
     if (action === "play" || action === "edit") {
