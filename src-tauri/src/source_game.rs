@@ -197,14 +197,18 @@ pub fn inspect_source_game(input: &Path) -> Result<SourceGameInspection, String>
     let mut media_files = 0_usize;
     let mut native_candidates = Vec::new();
     let mut walked = 0_usize;
+    let mut truncated = false;
 
-    while let Some((directory, depth)) = pending.pop() {
+    'scan: while let Some((directory, depth)) = pending.pop() {
         for entry in fs::read_dir(&directory)
             .map_err(|e| format!("Cannot inspect {}: {e}", directory.display()))? {
             let entry = entry.map_err(|e| e.to_string())?;
             walked += 1;
             if walked > MAX_SCAN_ENTRIES {
-                return Err(format!("Source game exceeds the {MAX_SCAN_ENTRIES}-entry inspection safety limit"));
+                // Large commercial-sized source trees should still be
+                // recognized and launchable. Counts below are partial.
+                truncated = true;
+                break 'scan;
             }
             let path = entry.path();
             let meta = fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
@@ -258,7 +262,13 @@ pub fn inspect_source_game(input: &Path) -> Result<SourceGameInspection, String>
         }
     }
 
-    let native_scene_candidate = if native_candidates.len() == 1 {
+    if truncated {
+        notes.push(format!(
+            "Source scan inspected the first {MAX_SCAN_ENTRIES} entries; file counts and 3D scene candidates are incomplete"
+        ));
+    }
+
+    let native_scene_candidate = if !truncated && native_candidates.len() == 1 {
         Some(native_candidates.remove(0))
     } else { None };
     if native_scene_candidate.is_some() {
