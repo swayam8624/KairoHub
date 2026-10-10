@@ -47,7 +47,15 @@ jobs:
           test -d "$APP"
           test -f "$APP/Contents/Info.plist"
           /usr/libexec/PlistBuddy -c 'Print :CFBundleName' "$APP/Contents/Info.plist"
-          find "$APP/Contents/MacOS" -type f -maxdepth 1 -print
+          EXE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Contents/Info.plist")"
+          if [[ "$EXE" != "kairo-hub" || ! -x "$APP/Contents/MacOS/kairo-hub" ]]; then
+            echo "Rejected macOS bundle: no real KairoHub GUI entrypoint" >&2
+            find "$APP/Contents/MacOS" -maxdepth 1 -type f -print
+            exit 3
+          fi
+          if [[ -x "$APP/Contents/MacOS/kairo-hub-inspect-game" ]]; then
+            echo "Inspector CLI was bundled as executable; verify GUI is still primary."
+          fi
       - name: Upload unsigned desktop app for manual testing
         uses: actions/upload-artifact@v7
         with:
