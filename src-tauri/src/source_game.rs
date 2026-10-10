@@ -28,6 +28,9 @@ pub struct SourceGameInspection {
     /// A single glTF/GLB file is a candidate for Kairo-native SCENE import.
     /// Game logic, scripts, animation state machines etc. are NOT translated.
     pub native_scene_candidate: Option<String>,
+    /// Deterministic bounded list for source games containing multiple
+    /// portable glTF/GLB scenes, requiring explicit selection.
+    pub native_scene_candidates: Vec<String>,
     /// Godot runs through Godot, never through KairoPlayer.
     pub original_runtime_available: bool,
     pub notes: Vec<String>,
@@ -295,6 +298,7 @@ pub fn inspect_source_game(input: &Path) -> Result<SourceGameInspection, String>
     let mut script_files = 0_usize;
     let mut media_files = 0_usize;
     let mut native_candidates = Vec::new();
+    let mut candidates_truncated = false;
     let mut walked = 0_usize;
     let mut truncated = false;
 
@@ -374,7 +378,7 @@ pub fn inspect_source_game(input: &Path) -> Result<SourceGameInspection, String>
             ) {
                 media_files += 1;
             }
-            if matches!(extension.as_str(), "glb" | "gltf") && native_candidates.len() < 2 {
+            if matches!(extension.as_str(), "glb" | "gltf") {
                 // Only record portable scene paths suitable for existing Kairo
                 // glTF import. Never follow symbolic links or arbitrary paths.
                 if let Ok(relative) = path.strip_prefix(&root) {
@@ -390,7 +394,11 @@ pub fn inspect_source_game(input: &Path) -> Result<SourceGameInspection, String>
                         _ => false,
                     });
                     if portable {
-                        native_candidates.push(relative.to_string_lossy().replace('\\', "/"));
+                        if native_candidates.len() < 256 {
+                            native_candidates.push(relative.to_string_lossy().replace('\\', "/"));
+                        } else {
+                            candidates_truncated = true;
+                        }
                     }
                 }
             }
@@ -403,8 +411,13 @@ pub fn inspect_source_game(input: &Path) -> Result<SourceGameInspection, String>
         ));
     }
 
-    let native_scene_candidate = if !truncated && native_candidates.len() == 1 {
-        Some(native_candidates.remove(0))
+    native_candidates.sort();
+    native_candidates.dedup();
+    if candidates_truncated {
+        notes.push("More than 256 3D scene candidates found; explicit scene discovery is incomplete".into());
+    }
+    let native_scene_candidate = if !truncated && !candidates_truncated && native_candidates.len() == 1 {
+        Some(native_candidates[0].clone())
     } else {
         None
     };
@@ -438,6 +451,7 @@ pub fn inspect_source_game(input: &Path) -> Result<SourceGameInspection, String>
         media_files,
         scanned_files,
         native_scene_candidate,
+        native_scene_candidates: native_candidates,
         original_runtime_available: runtime_available,
         notes,
     })
@@ -499,12 +513,30 @@ pub fn reconstruct_native_scene(
     display_name: &str,
     engine_version: &str,
 ) -> Result<PathBuf, String> {
+    reconstruct_native_scene_selected(root, display_name, engine_version, None)
+}
+
+/// Convert exactly one explicitly selected source-owned glTF/GLB scene.
+/// The chosen path MUST match the bounded, symlink-safe inventory.
+pub fn reconstruct_native_scene_selected(
+    root: &Path,
+    display_name: &str,
+    engine_version: &str,
+    selected: Option<&str>,
+) -> Result<PathBuf, String> {
     let info = inspect_source_game(root)?;
-    let path = info.native_scene_candidate.ok_or(
-        "This game has no unambiguous portable 3D scene; Kairo cannot reconstruct its gameplay. For a 2D Godot game, use Run Original instead")?;
+    let chosen = match selected {
+        Some(scene) if info.native_scene_candidates.iter().any(|v| v == scene) => {
+            scene.to_owned()
+        }
+        Some(_) => return Err("Chosen 3D scene is absent or unsafe; re-inspect the source game".into()),
+        None => info.native_scene_candidate.ok_or(
+            "Choose a specific glTF/GLB scene. A 2D Godot game needs a separate 2D gameplay converter; Run Original preserves its existing gameplay",
+        )?,
+    };
     crate::project::import_external_gltf_directory(
         &info.root,
-        Some(&path),
+        Some(&chosen),
         display_name,
         engine_version,
     )
