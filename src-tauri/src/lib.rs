@@ -1,5 +1,6 @@
 pub mod project;
 pub mod source_game;
+pub mod source_game_graph;
 
 use project::{EngineInstallation, HubState, PackageArtifact, ProjectHealth, RecoverySnapshotInfo};
 use std::fs;
@@ -248,6 +249,11 @@ fn inspect_source_game(root: PathBuf) -> Result<source_game::SourceGameInspectio
 }
 
 #[tauri::command]
+fn inspect_source_game_graph(root: PathBuf) -> Result<source_game_graph::GodotSceneGraph, String> {
+    source_game_graph::inspect_godot_graph(&root)
+}
+
+#[tauri::command]
 fn link_source_game(
     root: PathBuf,
     state: State<'_, ManagedHubState>,
@@ -430,6 +436,7 @@ pub fn run() {
             clone_project,
             import_external_gltf_project,
             inspect_source_game,
+            inspect_source_game_graph,
             link_source_game,
             launch_source_game,
             reconstruct_source_game,
