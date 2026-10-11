@@ -57,8 +57,13 @@ pub struct GodotMigrationPlan {
     pub issues: Vec<MigrationIssue>,
 }
 
-fn issue(code: &str, severity: &str, source: impl Into<String>,
-         explanation: impl Into<String>, suggested_action: &str) -> MigrationIssue {
+fn issue(
+    code: &str,
+    severity: &str,
+    source: impl Into<String>,
+    explanation: impl Into<String>,
+    suggested_action: &str,
+) -> MigrationIssue {
     MigrationIssue {
         code: code.into(),
         severity: severity.into(),
@@ -71,17 +76,26 @@ fn issue(code: &str, severity: &str, source: impl Into<String>,
 /// Only read project-owned files; reject every symlink in the path (including
 /// intermediate directory components) before reporting a resource as present.
 fn safe_owned_resource(root: &Path, source: &str) -> bool {
-    let Some(relative) = source.strip_prefix("res://") else { return false };
+    let Some(relative) = source.strip_prefix("res://") else {
+        return false;
+    };
     let relative = Path::new(relative);
     if relative.as_os_str().is_empty()
-        || !relative.components().all(|part| matches!(part, Component::Normal(_))) {
+        || !relative
+            .components()
+            .all(|part| matches!(part, Component::Normal(_)))
+    {
         return false;
     }
     let mut current = PathBuf::from(root);
     for part in relative.components() {
         current.push(part.as_os_str());
-        let Ok(meta) = fs::symlink_metadata(&current) else { return false };
-        if meta.file_type().is_symlink() { return false; }
+        let Ok(meta) = fs::symlink_metadata(&current) else {
+            return false;
+        };
+        if meta.file_type().is_symlink() {
+            return false;
+        }
     }
     current.is_file()
 }
@@ -110,9 +124,13 @@ pub fn plan_godot_migration(root: &Path) -> Result<GodotMigrationPlan, String> {
     let mut resource_ids = BTreeMap::new();
     for res in &graph.resources {
         if resource_ids.insert(res.id.as_str(), res).is_some() {
-            plan.issues.push(issue("DUPLICATE_RESOURCE_ID", "error",
-                &res.id, "Multiple resources have the same scene-local ID.",
-                "Give each external resource a unique ID in the Godot scene."));
+            plan.issues.push(issue(
+                "DUPLICATE_RESOURCE_ID",
+                "error",
+                &res.id,
+                "Multiple resources have the same scene-local ID.",
+                "Give each external resource a unique ID in the Godot scene.",
+            ));
         }
         let exists = safe_owned_resource(&info.root, &res.path);
         plan.source_assets.push(MigrationAsset {
@@ -127,13 +145,21 @@ pub fn plan_godot_migration(root: &Path) -> Result<GodotMigrationPlan, String> {
                 "Reimport the game using Godot, or supply the original project-owned resource."));
         }
         if res.resource_type == "Script" {
-            plan.issues.push(issue("GDSCRIPT_RUNTIME", "blocker", &res.path,
+            plan.issues.push(issue(
+                "GDSCRIPT_RUNTIME",
+                "blocker",
+                &res.path,
                 "GDScript behavior and callbacks have no verified Kairo translation.",
-                "Port gameplay methods to Kairo's supported runtime and compare original behavior."));
+                "Port gameplay methods to Kairo's supported runtime and compare original behavior.",
+            ));
         } else if res.resource_type == "PackedScene" {
-            plan.issues.push(issue("PACKED_SCENE", "blocker", &res.path,
+            plan.issues.push(issue(
+                "PACKED_SCENE",
+                "blocker",
+                &res.path,
                 "Instanced PackedScene hierarchy is not reconstructed as native Kairo entities.",
-                "Expand and translate referenced scenes with stable identity and transforms."));
+                "Expand and translate referenced scenes with stable identity and transforms.",
+            ));
         }
     }
 
@@ -148,43 +174,79 @@ pub fn plan_godot_migration(root: &Path) -> Result<GodotMigrationPlan, String> {
         } else {
             format!("{}/{}", node.parent, node.name)
         };
-        if index != 0 && node.parent != "." && !node.parent.is_empty()
-            && !known_paths.contains(&node.parent) {
-            plan.issues.push(issue("MISSING_PARENT", "error", &path,
-                format!("Scene parent '{}' was not declared before this node.", node.parent),
-                "Repair or re-export the Godot scene hierarchy."));
+        if index != 0
+            && node.parent != "."
+            && !node.parent.is_empty()
+            && !known_paths.contains(&node.parent)
+        {
+            plan.issues.push(issue(
+                "MISSING_PARENT",
+                "error",
+                &path,
+                format!(
+                    "Scene parent '{}' was not declared before this node.",
+                    node.parent
+                ),
+                "Repair or re-export the Godot scene hierarchy.",
+            ));
         }
         if !known_paths.insert(path.clone()) {
-            plan.issues.push(issue("DUPLICATE_NODE_PATH", "error", &path,
+            plan.issues.push(issue(
+                "DUPLICATE_NODE_PATH",
+                "error",
+                &path,
                 "Two nodes resolve to the same scene-local path.",
-                "Rename duplicated nodes before migration."));
+                "Rename duplicated nodes before migration.",
+            ));
         }
 
         let script = node.script_resource.as_ref().map(|id| {
-            resource_ids.get(id.as_str()).map(|res| res.path.clone())
+            resource_ids
+                .get(id.as_str())
+                .map(|res| res.path.clone())
                 .unwrap_or_else(|| format!("missing-resource:{id}"))
         });
         let packed = node.instance_resource.as_ref().map(|id| {
-            resource_ids.get(id.as_str()).map(|res| res.path.clone())
+            resource_ids
+                .get(id.as_str())
+                .map(|res| res.path.clone())
                 .unwrap_or_else(|| format!("missing-resource:{id}"))
         });
-        for id in [node.script_resource.as_ref(), node.instance_resource.as_ref()].into_iter().flatten() {
+        for id in [
+            node.script_resource.as_ref(),
+            node.instance_resource.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
             if !resource_ids.contains_key(id.as_str()) {
-                plan.issues.push(issue("UNRESOLVED_RESOURCE_ID", "error", &path,
+                plan.issues.push(issue(
+                    "UNRESOLVED_RESOURCE_ID",
+                    "error",
+                    &path,
                     format!("Node references undeclared external resource '{id}'."),
-                    "Restore the missing ext_resource declaration."));
+                    "Restore the missing ext_resource declaration.",
+                ));
             }
         }
-        if node.node_type.contains("2D") || matches!(node.node_type.as_str(),
-            "Control" | "ColorRect" | "CanvasLayer" | "Sprite2D" | "AnimatedSprite2D") {
+        if node.node_type.contains("2D")
+            || matches!(
+                node.node_type.as_str(),
+                "Control" | "ColorRect" | "CanvasLayer" | "Sprite2D" | "AnimatedSprite2D"
+            )
+        {
             plan.issues.push(issue("CANVAS_2D_RUNTIME", "blocker", &path,
                 format!("Godot node type '{}' requires a tested Kairo 2D renderer and scene serializer.", node.node_type),
                 "Use the original Godot runtime until Kairo's native 2D adapter is implemented."));
         }
         if node.node_type == "Timer" {
-            plan.issues.push(issue("TIMER_SEMANTICS", "blocker", &path,
+            plan.issues.push(issue(
+                "TIMER_SEMANTICS",
+                "blocker",
+                &path,
                 "Godot Timer pause/time-scale/timeout behavior is not translated.",
-                "Port timer scheduling and verify callbacks against original input traces."));
+                "Port timer scheduling and verify callbacks against original input traces.",
+            ));
         }
         plan.source_objects.push(MigrationObject {
             source_path: path,
@@ -195,17 +257,27 @@ pub fn plan_godot_migration(root: &Path) -> Result<GodotMigrationPlan, String> {
     }
 
     for signal in &graph.signals {
-        plan.issues.push(issue("SIGNAL_BINDING", "blocker",
+        plan.issues.push(issue(
+            "SIGNAL_BINDING",
+            "blocker",
             format!("{}::{}", signal.from, signal.signal),
-            format!("Signal connection to '{}' method '{}' is not translated.", signal.to, signal.method),
-            "Rebind the event to an equivalent Kairo runtime callback and test it."));
+            format!(
+                "Signal connection to '{}' method '{}' is not translated.",
+                signal.to, signal.method
+            ),
+            "Rebind the event to an equivalent Kairo runtime callback and test it.",
+        ));
     }
     if !plan.issues.iter().any(|entry| entry.severity == "blocker") {
         // A zero-issue structural parse still cannot prove scene/component
         // equivalence, let alone native gameplay. Require differential replay.
-        plan.issues.push(issue("PARITY_NOT_ESTABLISHED", "blocker", &plan.main_scene,
+        plan.issues.push(issue(
+            "PARITY_NOT_ESTABLISHED",
+            "blocker",
+            &plan.main_scene,
             "No reference replay confirms that this game behaves the same in Kairo.",
-            "Run original and reconstructed games under matching input traces, then compare."));
+            "Run original and reconstructed games under matching input traces, then compare.",
+        ));
     }
     Ok(plan)
 }
@@ -223,13 +295,16 @@ mod tests {
     #[test]
     fn stable_node_paths_missing_resources_and_signals_are_actionable() {
         let tmp = tempfile::tempdir().unwrap();
-        scene(tmp.path(), "[gd_scene format=3]\n\
+        scene(
+            tmp.path(),
+            "[gd_scene format=3]\n\
             [ext_resource type=\"Script\" path=\"res://scripts/player.gd\" id=\"1\"]\n\
             [node name=\"World\" type=\"Node2D\"]\n\
             [node name=\"Player\" type=\"CharacterBody2D\" parent=\".\"]\n\
             script = ExtResource(\"1\")\n\
             [node name=\"Camera\" type=\"Camera2D\" parent=\"Player\"]\n\
-            [connection signal=\"hit\" from=\"Player\" to=\".\" method=\"game_over\"]\n");
+            [connection signal=\"hit\" from=\"Player\" to=\".\" method=\"game_over\"]\n",
+        );
         let plan = plan_godot_migration(tmp.path()).unwrap();
         assert_eq!(plan.schema, "kairo-migration-plan 1");
         assert_eq!(plan.source_objects.len(), 3);
@@ -238,18 +313,28 @@ mod tests {
         assert_eq!(plan.source_objects[2].source_path, "Player/Camera");
         assert_eq!(plan.signal_count, 1);
         assert!(!plan.native_gameplay_ready);
-        for expected in ["RESOURCE_UNAVAILABLE", "GDSCRIPT_RUNTIME",
-                         "CANVAS_2D_RUNTIME", "SIGNAL_BINDING"] {
-            assert!(plan.issues.iter().any(|problem| problem.code == expected), "{expected}");
+        for expected in [
+            "RESOURCE_UNAVAILABLE",
+            "GDSCRIPT_RUNTIME",
+            "CANVAS_2D_RUNTIME",
+            "SIGNAL_BINDING",
+        ] {
+            assert!(
+                plan.issues.iter().any(|problem| problem.code == expected),
+                "{expected}"
+            );
         }
     }
 
     #[test]
     fn source_symlink_and_parent_traversal_are_not_considered_local_assets() {
         let tmp = tempfile::tempdir().unwrap();
-        scene(tmp.path(), "[gd_scene format=3]\n\
+        scene(
+            tmp.path(),
+            "[gd_scene format=3]\n\
             [ext_resource type=\"Texture2D\" path=\"res://../secret.png\" id=\"1\"]\n\
-            [node name=\"World\" type=\"Node3D\"]\n");
+            [node name=\"World\" type=\"Node3D\"]\n",
+        );
         let plan = plan_godot_migration(tmp.path()).unwrap();
         assert!(!plan.source_assets[0].exists);
         assert!(!plan.native_gameplay_ready);
@@ -258,7 +343,10 @@ mod tests {
     #[test]
     fn never_claims_native_gameplay_without_reference_replay() {
         let tmp = tempfile::tempdir().unwrap();
-        scene(tmp.path(), "[gd_scene format=3]\n[node name=\"Root\" type=\"Node3D\"]\n");
+        scene(
+            tmp.path(),
+            "[gd_scene format=3]\n[node name=\"Root\" type=\"Node3D\"]\n",
+        );
         let plan = plan_godot_migration(tmp.path()).unwrap();
         assert_eq!(plan.issues.len(), 1);
         assert_eq!(plan.issues[0].code, "PARITY_NOT_ESTABLISHED");
