@@ -1971,7 +1971,7 @@ mod tests {
         )
         .unwrap();
         let (game, descriptor) = resolve_prebuilt_game(&project).unwrap();
-        assert_eq!(game, game_root.join("Build/GamePlayer"));
+        assert_eq!(game, fs::canonicalize(game_root.join("Build/GamePlayer")).unwrap());
         assert_eq!(descriptor, fs::canonicalize(&project).unwrap());
     }
 
