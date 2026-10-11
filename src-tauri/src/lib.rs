@@ -264,7 +264,9 @@ fn inspect_source_game_graph(root: PathBuf) -> Result<source_game_graph::GodotSc
 }
 
 #[tauri::command]
-fn plan_source_game_migration(root: PathBuf) -> Result<source_game_migration::GodotMigrationPlan, String> {
+fn plan_source_game_migration(
+    root: PathBuf,
+) -> Result<source_game_migration::GodotMigrationPlan, String> {
     source_game_migration::plan_godot_migration(&root)
 }
 
