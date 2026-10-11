@@ -89,6 +89,23 @@ jobs:
           assert any("GDScript" in issue for issue in graph["unsupportedBehaviors"]), graph
           print("REAL SCENE GRAPH PASSED: nodes/resources/signals preserved; unsupported gameplay explicitly flagged")
           PY
+          cargo run --quiet --locked --manifest-path src-tauri/Cargo.toml \
+            --bin kairo-hub-inspect-game -- \
+            "$RUNNER_TEMP/kairo-godot-demo/2d/dodge_the_creeps" --migration-plan > "$RUNNER_TEMP/migration-plan.json"
+          python3 - "$RUNNER_TEMP/migration-plan.json" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding="utf-8") as file:
+              plan = json.load(file)
+          assert plan["schema"] == "kairo-migration-plan 1", plan
+          assert plan["engine"] == "Godot", plan
+          assert plan["nativeGameplayReady"] is False, plan
+          assert len(plan["sourceObjects"]) >= 10, plan
+          assert len(plan["sourceAssets"]) >= 6, plan
+          assert plan["signalCount"] >= 5, plan
+          codes = {issue["code"] for issue in plan["issues"]}
+          assert {"GDSCRIPT_RUNTIME", "CANVAS_2D_RUNTIME", "SIGNAL_BINDING"} <= codes, codes
+          print("REAL GAME MIGRATION PLAN PASSED: authored objects and typed unresolved semantics recorded")
+          PY
 
   original-game-baseline:
     name: Run real Godot game on original engine (not Kairo)

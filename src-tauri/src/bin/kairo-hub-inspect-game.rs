@@ -13,16 +13,23 @@ fn run() -> Result<(), String> {
     let source = args
         .next()
         .map(PathBuf::from)
-        .ok_or("usage: kairo-hub-inspect-game <original-game-root> [--graph]")?;
-    let graph = match args.next() {
-        None => false,
-        Some(flag) if flag == "--graph" => true,
-        Some(_) => return Err("Only optional --graph is supported".into()),
+        .ok_or("usage: kairo-hub-inspect-game <original-game-root> [--graph | --migration-plan]")?;
+    let mode = match args.next() {
+        None => "inspect",
+        Some(flag) if flag == "--graph" => "graph",
+        Some(flag) if flag == "--migration-plan" => "migration",
+        Some(_) => return Err("Use optional --graph or --migration-plan".into()),
     };
     if args.next().is_some() {
         return Err("Too many CLI arguments".into());
     }
-    if graph {
+    if mode == "migration" {
+        let report = kairo_hub_lib::source_game_migration::plan_godot_migration(&source)?;
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?
+        );
+    } else if mode == "graph" {
         let report = kairo_hub_lib::source_game_graph::inspect_godot_graph(&source)?;
         println!(
             "{}",

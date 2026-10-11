@@ -63,6 +63,27 @@ type SourceGameGraph = {
   unsupportedBehaviors: string[];
 };
 
+type GameMigrationIssue = {
+  code: string;
+  severity: "blocker" | "error" | "warning";
+  source: string;
+  explanation: string;
+  suggestedAction: string;
+};
+
+type GodotMigrationPlan = {
+  schema: string;
+  engine: string;
+  title: string;
+  mainScene: string;
+  sourceObjects: {sourcePath: string; sourceType: string; authoredScript: string | null; packedScene: string | null}[];
+  sourceAssets: {resourceId: string; resourceType: string; sourcePath: string; exists: boolean}[];
+  signalCount: number;
+  nativeGameplayReady: boolean;
+  originalRuntimeAvailable: boolean;
+  issues: GameMigrationIssue[];
+};
+
 type SourceGameInspection = {
   root: string;
   engine: "Godot" | "Unity" | "Unreal";
@@ -73,6 +94,7 @@ type SourceGameInspection = {
   mediaFiles: number;
   scannedFiles: number;
   nativeSceneCandidate: string | null;
+  nativeSceneCandidates: string[];
   originalRuntimeAvailable: boolean;
   notes: string[];
 };
@@ -163,6 +185,17 @@ app.innerHTML = `
       <div class="dialog-actions"><button value="cancel" class="button secondary">Cancel</button><button id="confirm-external-import" value="default" class="button primary">Clone and convert</button></div>
     </form>
   </dialog>
+  <dialog id="reconstruct-dialog">
+    <form method="dialog" class="dialog-form">
+      <div><p class="eyebrow">Native asset migration</p><h2>Choose a 3D scene</h2></div>
+      <label>Scene to import<select id="reconstruct-scene" required></select></label>
+      <p class="field-note">Creates a new editable Kairo scene and project descriptor. Scripts, collisions, menus, and gameplay are not translated. The source files remain untouched.</p>
+      <div class="dialog-actions">
+        <button value="cancel" class="button secondary">Cancel</button>
+        <button id="confirm-reconstruct" type="button" class="button primary">Create Kairo scene</button>
+      </div>
+    </form>
+  </dialog>
   <dialog id="game-inspection-dialog" class="wide-dialog">
     <div class="dialog-form">
       <div><p class="eyebrow">Compatibility report</p><h2 id="game-inspection-title">Game analysis</h2></div>
@@ -202,6 +235,9 @@ app.innerHTML = `
 const projectList = document.querySelector<HTMLDivElement>("#project-list")!;
 const sourceGameList = document.querySelector<HTMLDivElement>("#source-game-list")!;
 const gameInspectionDialog = document.querySelector<HTMLDialogElement>("#game-inspection-dialog")!;
+const reconstructDialog = document.querySelector<HTMLDialogElement>("#reconstruct-dialog")!;
+const reconstructScene = document.querySelector<HTMLSelectElement>("#reconstruct-scene")!;
+let reconstructRoot: string | null = null;
 const projectFilter = document.querySelector<HTMLInputElement>("#project-filter")!;
 const importDialog = document.querySelector<HTMLDialogElement>("#import-dialog")!;
 const createDialog = document.querySelector<HTMLDialogElement>("#create-dialog")!;
@@ -340,12 +376,11 @@ function renderSourceGames(): void {
     const info = sourceGamesByRoot.get(root);
     const error = sourceGameErrors.get(root);
     if (!info) return '<div class="compact-empty">' + escapeHtml(error ?? 'Inspecting ' + root) + '</div>';
-    const canPlay = info.engine === "Godot" && Boolean(info.mainScene) &&
-      (info.originalRuntimeAvailable || Boolean(state.godotExecutable));
-    const canConvert = Boolean(info.nativeSceneCandidate);
+    const canPlay = info.engine === "Godot" && Boolean(info.mainScene);
+    const canConvert = info.nativeSceneCandidates.length > 0;
     const note = info.notes[0] ?? 'Source project detected';
     const escapedRoot = escapeHtml(root);
-    const disabledPlay = canPlay ? '' : 'disabled title="Godot executable or startup scene unavailable"';
+    const disabledPlay = canPlay ? "" : 'disabled title="Only Godot games with a startup scene can run through the original engine"';
     const disabledConvert = canConvert ? '' : 'disabled title="No single portable 3D scene"';
     return '<article class="project-row source-row" data-source-root="' + escapedRoot + '">'
       + '<div class="project-glyph">' + escapeHtml(info.engine.slice(0, 1)) + '</div>'
@@ -353,9 +388,9 @@ function renderSourceGames(): void {
       + '</strong><span class="health warning">' + escapeHtml(info.engine) + ' source</span></div>'
       + '<small>' + escapedRoot + '</small><p>' + escapeHtml(note) + '</p></div>'
       + '<button class="button secondary" type="button" data-source-action="inspect">Inspect</button>'
-      + '<button class="button secondary" type="button" data-source-action="convert" ' + disabledConvert + '>Convert 3D scene</button>'
+      + '<button class="button secondary" type="button" data-source-action="convert" ' + disabledConvert + '>Import 3D scene</button>'
       + '<button class="button secondary" type="button" data-source-action="edit" ' + disabledPlay + '>Original editor</button>'
-      + '<button class="button primary" type="button" data-source-action="play" ' + disabledPlay + '>▶ Run original</button>'
+      + '<button class="button primary" type="button" data-source-action="play" ' + disabledPlay + '>▶ Play</button>'
       + '</article>';
   }).join('');
 }
@@ -368,7 +403,7 @@ async function showSourceInspection(info: SourceGameInspection): Promise<void> {
     ["Scene files", String(info.sceneFiles)],
     ["Script files", String(info.scriptFiles)],
     ["Media files", String(info.mediaFiles)],
-    ["Kairo-compatible 3D scene", info.nativeSceneCandidate ?? "None"],
+    ["3D scenes available to import", String(info.nativeSceneCandidates.length)],
     ["Original engine executable", info.originalRuntimeAvailable ? "Available" : "Unavailable"],
   ];
   document.querySelector("#game-inspection-details")!.innerHTML = properties.map(([key, value]) =>
@@ -388,6 +423,32 @@ async function showSourceInspection(info: SourceGameInspection): Promise<void> {
   } catch (error) {
     document.querySelector("#game-inspection-details")!.insertAdjacentHTML("beforeend",
       '<p>Scene graph detail unavailable: ' + escapeHtml(String(error)) + '</p>');
+  }
+  try {
+    const plan = await invoke<GodotMigrationPlan>("plan_source_game_migration", {root: info.root});
+    const blocking = plan.issues.filter((entry) => entry.severity === "blocker").length;
+    const missing = plan.sourceAssets.filter((asset) => !asset.exists).length;
+    const sample = plan.issues.slice(0, 12);
+    const items = sample.map((entry) =>
+      '<li><strong>' + escapeHtml(entry.code.replace(/_/g, " ")) + '</strong> — ' +
+      escapeHtml(entry.explanation) + '<small>' +
+      escapeHtml(entry.source + " · " + entry.suggestedAction) + '</small></li>').join("");
+    const heading = '<p><strong>Game reconstruction readiness:</strong> ' +
+      plan.sourceObjects.length + ' scene objects, ' + plan.sourceAssets.length +
+      ' referenced resources (' + missing + ' unavailable), ' + plan.signalCount +
+      ' signals, ' + blocking + ' native-play blockers. ' +
+      (plan.nativeGameplayReady ? "Native gameplay certified" :
+        "Original gameplay only; a Kairo-native port is not yet verified.") + '</p>';
+    document.querySelector("#game-inspection-details")!.insertAdjacentHTML("beforeend",
+      heading + '<div class="migration-plan"><strong>What needs converting</strong><ol>' +
+      items + '</ol>' +
+      (plan.issues.length > sample.length ?
+        '<p>+' + (plan.issues.length - sample.length) +
+        ' additional migration findings. Export the complete JSON using the inspector CLI.</p>' : '') +
+      '</div>');
+  } catch (error) {
+    document.querySelector("#game-inspection-details")!.insertAdjacentHTML("beforeend",
+      '<p>Migration assessment unavailable: ' + escapeHtml(String(error)) + '</p>');
   }
 }
 
@@ -423,6 +484,33 @@ async function refreshHealth(): Promise<void> {
     healthByPath.set(path, health);
     renderProjects();
   }));
+}
+
+// A novice should never need to open Settings before their first Play.
+// Resolve the selected installation at the point of action and describe the
+// exact missing tool instead of a generic failed-process notification.
+async function ensureNativeTools(mode: "play" | "edit"): Promise<boolean> {
+  let selected = engines.find((engine) => engine.root === state.selectedEngine);
+  if (!selected) {
+    const root = await open({ multiple: false, directory: true,
+      title: "Locate your KairoGameEngine installation to " + mode });
+    if (!root) return false;
+    const installed = await invoke<EngineInstallation>("register_engine", { root });
+    state = await invoke<HubState>("hub_state");
+    engines = await invoke<EngineInstallation[]>("engine_installations");
+    selected = installed;
+    renderEngines();
+  }
+  if (mode === "play" && (!selected.projectCompilerAvailable || !selected.playerAvailable)) {
+    throw new Error("This Kairo engine is not built for Play yet. Missing: " +
+      [!selected.projectCompilerAvailable ? "Project Compiler" : "",
+       !selected.playerAvailable ? "KairoPlayer" : ""].filter(Boolean).join(", ") +
+      ". Build KairoGameEngine once, then return to Play.");
+  }
+  if (mode === "edit" && !selected.editorAvailable) {
+    throw new Error("KairoEditor is not built in this installation. Build KairoGameEngine once, then choose Edit again.");
+  }
+  return true;
 }
 
 async function loadState(): Promise<void> {
@@ -615,12 +703,25 @@ projectList.addEventListener("click", async (event) => {
       await showRecovery(path);
     } else if (target.dataset.action === "package") {
       showPackage(path);
-    } else if (target.dataset.action === "run") {
-      const processId = await invoke<number>("launch_player", { path });
-      notify(`Game runtime started (process ${processId})`);
-    } else {
-      const processId = await invoke<number>("launch_editor", { path, recoverySnapshot: null });
-      notify(`KairoEditor launched (process ${processId})`);
+    } else if (target.dataset.action === "run" || target.dataset.action === "open") {
+      const mode = target.dataset.action === "run" ? "play" : "edit";
+      const shippedExecutable = mode === "play" &&
+        Boolean(healthByPath.get(path)?.descriptor?.playExecutable);
+      if (!shippedExecutable && !await ensureNativeTools(mode)) return;
+      target.disabled = true;
+      const originalLabel = target.textContent;
+      target.textContent = mode === "play" ? "Starting…" : "Opening…";
+      try {
+        const processId = mode === "play"
+          ? await invoke<number>(shippedExecutable ? "launch_prebuilt_game" : "launch_player", { path })
+          : await invoke<number>("launch_editor", { path, recoverySnapshot: null });
+        notify(mode === "play"
+          ? `Game runtime started (process ${processId})`
+          : `Editor opened (process ${processId})`);
+      } finally {
+        target.disabled = false;
+        target.textContent = originalLabel;
+      }
     }
   } catch (error) { notify(String(error), true); }
 });
@@ -637,16 +738,48 @@ sourceGameList.addEventListener("click", async (event) => {
   button.disabled = true;
   try {
     if (action === "play" || action === "edit") {
+      // The novice path is a single Play click. If Godot isn't configured,
+      // offer its file chooser at the point of need rather than disabling Play.
+      if (!info.originalRuntimeAvailable && !state.godotExecutable) {
+        const executable = await open({ multiple: false, directory: false,
+          title: "Select Godot to play this existing game" });
+        if (!executable) return;
+        state = await invoke<HubState>("register_godot_runtime", { executable });
+      }
       const pid = await invoke<number>("launch_source_game", { root, edit: action === "edit" });
-      notify("Original " + info.engine + " launched (process " + pid + "). Not Kairo-native gameplay.");
+      notify("Playing " + info.displayName + " in original " + info.engine +
+        " runtime (process " + pid + "). Conversion is not required to play.");
     } else if (action === "convert") {
-      const project = await invoke<string>("reconstruct_source_game", { root });
-      state = await invoke<HubState>("hub_state");
-      await refreshHealth();
-      notify("Kairo 3D scene imported: " + project + ". Gameplay code is not converted.");
+      reconstructRoot = root;
+      reconstructScene.innerHTML = info.nativeSceneCandidates
+        .map((candidate) => '<option value="' + escapeHtml(candidate) + '">' +
+          escapeHtml(candidate) + '</option>').join("");
+      reconstructDialog.showModal();
     }
   } catch (error) { notify(String(error), true); }
   finally { button.disabled = false; }
+});
+
+// Never silently choose one scene from a multi-scene imported game.
+document.querySelector("#confirm-reconstruct")!.addEventListener("click", async (event) => {
+  const root = reconstructRoot;
+  const entryScene = reconstructScene.value;
+  if (!root || !entryScene) return;
+  const button = event.currentTarget as HTMLButtonElement;
+  button.disabled = true;
+  try {
+    const project = await invoke<string>("reconstruct_source_game", { root, entryScene });
+    reconstructDialog.close();
+    reconstructRoot = null;
+    state = await invoke<HubState>("hub_state");
+    await refreshHealth();
+    notify("Kairo 3D scene created: " + project +
+      ". Gameplay is not ported. Use Edit to modify the scene.");
+  } catch (error) {
+    notify(String(error), true);
+  } finally {
+    button.disabled = false;
+  }
 });
 
 recoveryList.addEventListener("click", async (event) => {

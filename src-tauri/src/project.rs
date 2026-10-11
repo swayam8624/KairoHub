@@ -1592,6 +1592,65 @@ fn compile_project_logic(project: &Path, installation: &EngineInstallation) -> R
     Ok(())
 }
 
+/// Resolve a user-selected Kairo project's already-built standalone player.
+/// An ordinary Play action must not force a compiler install if the game ships
+/// a runtime executable. This only applies to a validated native .kproject;
+/// external-engine source games never reach this function.
+pub fn resolve_prebuilt_game(project: &Path) -> Result<(PathBuf, PathBuf), String> {
+    let health = inspect_project(project);
+    if !health.is_valid() {
+        return Err(format!(
+            "Cannot play this project: {}",
+            health.errors.join("; ")
+        ));
+    }
+    let relative = health
+        .descriptor
+        .as_ref()
+        .and_then(|descriptor| descriptor.play_executable.as_ref())
+        .ok_or(
+            "This project has no built-in Play executable; select a Kairo engine installation",
+        )?;
+    validate_relative_path(relative, "play-executable")?;
+    let canonical_project = fs::canonicalize(project)
+        .map_err(|error| format!("Cannot resolve project descriptor: {error}"))?;
+    let root = canonical_project
+        .parent()
+        .ok_or("Project descriptor has no parent directory")?;
+
+    let mut candidate = root.to_path_buf();
+    for component in relative.components() {
+        let Component::Normal(part) = component else {
+            return Err("Play executable must use a project-relative path".into());
+        };
+        candidate.push(part);
+        let metadata = fs::symlink_metadata(&candidate).map_err(|error| {
+            format!(
+                "Cannot inspect Play executable '{}': {error}",
+                relative.display()
+            )
+        })?;
+        if metadata.file_type().is_symlink() {
+            return Err("Play executable path may not cross symbolic links".into());
+        }
+    }
+    if !candidate.is_file() {
+        return Err("Configured Play executable is not a regular file".into());
+    }
+    Ok((candidate, canonical_project))
+}
+
+/// Play an already-built game without KairoPlayer, compiler, source edits or
+/// any Kairo development toolchain. Passing the project descriptor is the same
+/// argv contract as an authored play-executable project.
+pub fn launch_prebuilt_game(project: &Path) -> Result<Child, String> {
+    let (executable, descriptor) = resolve_prebuilt_game(project)?;
+    Command::new(&executable)
+        .arg(&descriptor)
+        .spawn()
+        .map_err(|error| format!("Cannot start this prebuilt game: {error}"))
+}
+
 /// Builds attached visual logic, then launches the selected engine's player
 /// after KairoHub's structural inspection and KairoPlayer's runtime boundary.
 /// Command arguments are passed directly, never through a host shell.
@@ -1599,39 +1658,16 @@ pub fn launch_player_with(
     project: &Path,
     installation: &EngineInstallation,
 ) -> Result<Child, String> {
-    let health = validate_player_operation(project, installation)?;
-    compile_project_logic(project, installation)?;
-    let descriptor = health
+    if inspect_project(project)
         .descriptor
         .as_ref()
-        .ok_or("Project validation succeeded without descriptor metadata")?;
-
-    if let Some(relative) = &descriptor.play_executable {
-        let project_file = fs::canonicalize(project)
-            .map_err(|error| format!("Cannot resolve project descriptor: {error}"))?;
-        let root = project_file
-            .parent()
-            .ok_or("Project descriptor has no parent directory")?;
-        let executable = fs::canonicalize(root.join(relative)).map_err(|error| {
-            format!(
-                "Project Play executable is missing or unreadable '{}': {error}",
-                relative.display()
-            )
-        })?;
-        if !executable.starts_with(root) || !executable.is_file() {
-            return Err("Project Play executable escapes the project root or is not a file".into());
-        }
-        return Command::new(&executable)
-            .arg(&project_file)
-            .spawn()
-            .map_err(|error| {
-                format!(
-                    "Cannot launch project Play executable '{}': {error}",
-                    executable.display()
-                )
-            });
+        .and_then(|descriptor| descriptor.play_executable.as_ref())
+        .is_some()
+    {
+        return launch_prebuilt_game(project);
     }
-
+    validate_player_operation(project, installation)?;
+    compile_project_logic(project, installation)?;
     Command::new(&installation.player)
         .arg(project)
         .spawn()
@@ -1915,6 +1951,74 @@ mod tests {
         assert!(parse_project(
             "kairo-project 2\nname \"Bad\"\nengine-version \"0.1.0\"\nassets \"Assets.kassets\"\nstartup-scene \"Scenes/Main.kscene\"\ninput-map \"Config/Input.kinput\"\nrendering-profile \"desktop\"\ngraphics-backend \"software\"\nbuild-profile \"Shipping\" release \"Artifacts/Shipping\"\n"
         ).is_err());
+    }
+
+    #[test]
+    fn shipped_native_game_can_be_resolved_without_engine_toolchain() {
+        let root = tempfile::tempdir().unwrap();
+        let project = create_project(root.path(), "Shipped", "Shipped Game").unwrap();
+        let game_root = project.parent().unwrap();
+        fs::create_dir_all(game_root.join("Build")).unwrap();
+        fs::write(
+            game_root.join("Build/GamePlayer"),
+            b"built game placeholder",
+        )
+        .unwrap();
+        let previous = fs::read_to_string(&project).unwrap();
+        fs::write(
+            &project,
+            format!("{previous}play-executable \"Build/GamePlayer\"\n"),
+        )
+        .unwrap();
+        let (game, descriptor) = resolve_prebuilt_game(&project).unwrap();
+        assert_eq!(game, fs::canonicalize(game_root.join("Build/GamePlayer")).unwrap());
+        assert_eq!(descriptor, fs::canonicalize(&project).unwrap());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shipped_game_actually_launches_without_installed_kairo_compiler() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let project = create_project(root.path(), "Play", "Prebuilt Game").unwrap();
+        let game_root = project.parent().unwrap();
+        fs::create_dir_all(game_root.join("Build")).unwrap();
+        let exe = game_root.join("Build/GamePlayer");
+        // This process checks the descriptor argv contract and exits.
+        // It proves direct Play needs no installed Kairo compiler or editor.
+        fs::write(&exe, "#!/bin/sh\ntest -f \"$1\"\n").unwrap();
+        let mut perms = fs::metadata(&exe).unwrap().permissions();
+        perms.set_mode(0o700);
+        fs::set_permissions(&exe, perms).unwrap();
+        let source = fs::read_to_string(&project).unwrap();
+        fs::write(
+            &project,
+            format!("{source}play-executable \"Build/GamePlayer\"\n"),
+        )
+        .unwrap();
+        // A successful process exit is enough for this headless unit gate.
+        let mut process = launch_prebuilt_game(&project).unwrap();
+        assert!(process.wait().unwrap().success());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shipped_game_does_not_follow_symlinks_into_foreign_code() {
+        use std::os::unix::fs::symlink;
+        let root = tempfile::tempdir().unwrap();
+        let project = create_project(root.path(), "Shipped", "Shipped Game").unwrap();
+        let game_root = project.parent().unwrap();
+        let external = tempfile::tempdir().unwrap();
+        fs::write(external.path().join("GamePlayer"), b"external").unwrap();
+        symlink(external.path(), game_root.join("External")).unwrap();
+        let old = fs::read_to_string(&project).unwrap();
+        fs::write(
+            &project,
+            format!("{old}play-executable \"External/GamePlayer\"\n"),
+        )
+        .unwrap();
+        let err = resolve_prebuilt_game(&project).unwrap_err();
+        assert!(err.contains("symbolic links"), "{err}");
     }
 
     #[test]

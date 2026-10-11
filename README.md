@@ -25,6 +25,47 @@ Unreal Blueprints, physics logic, menus, collisions or commercial executable
 binaries. A 2D Godot game without glTF/GLB cannot yet become native Kairo
 gameplay; inspection reports that explicitly.
 
+## Open Kairo: choose a game, then Play
+
+The desktop application's product name is **Kairo**. Opening it displays
+the KairoHub game library instead of a source-code editor.
+
+- **Play** a ready native Kairo project: Hub validates and compiles authored
+  project logic and launches KairoPlayer with startup-failure reporting.
+- **Play prebuilt** is genuinely zero-development-toolchain: when a native
+  `.kproject` explicitly names a local `play-executable`, Hub verifies that
+  executable is project-owned, has no symlink components, and launches it
+  directly with the project path as its only argument. No compiler, editor,
+  CMake or engine source checkout is needed. Only an explicit Play click
+  launches the game; importing files never executes them automatically.
+- **Play** a linked Godot game: the original Godot runtime runs the game.
+  On first use, the Play action offers an executable chooser if needed.
+- **Edit** is separate from Play for both native projects and Godot sources.
+- **Import 3D scene**: select one glTF/GLB file from the available source
+  scenes; Hub creates a Kairo-native scene wrapper without overwriting
+  existing work. Gameplay scripts, 2D physics, and menus are not translated.
+
+Godot 4 project files with uid:// startup references are resolved from safe,
+bounded project-owned .tscn scene headers. Missing or ambiguous UIDs fail
+closed rather than launching a different scene.
+
+The desktop-macos.yml workflow packages an **unsigned Kairo.app** for
+internal testing; this is not a notarized release installer.
+
+### Machine-readable source migration plans
+
+To assess a real Godot game without executing scripts, use:
+
+```bash
+cargo run --locked --manifest-path src-tauri/Cargo.toml --bin kairo-hub-inspect-game -- /path/to/godot-game --migration-plan
+```
+
+The plan preserves deterministic source-node paths, authored script and
+PackedScene relationships, referenced resource locations and existence,
+signal counts, and explicit block reasons. It never silently upgrades an
+asset import to a certified playable game; Kairo-native equivalence still
+requires real gameplay translation and comparative testing.
+
 ## Development
 
 ```bash
@@ -62,7 +103,7 @@ overwritten by Repair.
 - Stores Hub recents/favorites in the operating system application-data directory, never in the project.
 - Spawns KairoEditor as a child process through the documented `--project` and `--no-layout-persistence` CLI.
 - Discovers KairoEditor, KairoProjectCompiler, and KairoPlayer from one selected engine build.
-- Runs `<compiler> <project.kproject>` to publish source-bound attached logic, then spawns `<player> <project.kproject>` only when compilation succeeds; no command is routed through a shell.
+- For editable native projects, runs `<compiler> <project.kproject>` to publish attached logic, then spawns `<player> <project.kproject>` only when compilation succeeds. An explicitly configured, already-built `play-executable` is verified and launched directly without any dev toolchain. No command is routed through a shell.
 - Lists build profiles from the validated project descriptor and runs `<player> <project.kproject> --package <profile>` only after the same compiler gate succeeds. Replacement is explicit, and success is reported only after Hub verifies the published package manifest.
 - Imports a local `.kproject` only after its descriptor and required bootstrap files validate.
 - Clones only strict HTTPS `github.com`/`gitlab.com` `.git` URLs without a shell, does not follow repository symlinks while discovering projects, deletes an invalid clone, and accepts exactly one validated `.kproject`.

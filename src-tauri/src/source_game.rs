@@ -28,6 +28,9 @@ pub struct SourceGameInspection {
     /// A single glTF/GLB file is a candidate for Kairo-native SCENE import.
     /// Game logic, scripts, animation state machines etc. are NOT translated.
     pub native_scene_candidate: Option<String>,
+    /// Deterministic bounded list for source games containing multiple
+    /// portable glTF/GLB scenes, requiring explicit selection.
+    pub native_scene_candidates: Vec<String>,
     /// Godot runs through Godot, never through KairoPlayer.
     pub original_runtime_available: bool,
     pub notes: Vec<String>,
@@ -79,9 +82,94 @@ fn godot_setting(content: &str, section: &str, key: &str) -> Option<String> {
     None
 }
 
+/// Resolve Godot 4 UID-based startup references from text-scene headers.
+////
+//// We intentionally do not parse Godot's generated binary UID cache. Instead,
+//// search project-owned .tscn headers with strict resource limits. Returning
+//// an ambiguous UID is worse than refusing to play the wrong scene.
+fn resolve_godot_scene_uid(root: &Path, uid: &str) -> Result<String, String> {
+    if !uid.starts_with("uid://")
+        || uid.len() > 160
+        || !uid[6..].chars().all(|c| c.is_ascii_alphanumeric())
+    {
+        return Err("Godot startup UID has an unsupported format".into());
+    }
+    let mut pending = vec![(root.to_path_buf(), 0usize)];
+    let mut visited = 0usize;
+    let mut match_path: Option<String> = None;
+    while let Some((directory, depth)) = pending.pop() {
+        for entry in fs::read_dir(directory).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            visited += 1;
+            if visited > MAX_SCAN_ENTRIES {
+                return Err("Godot UID lookup exceeded the bounded project scan".into());
+            }
+            let path = entry.path();
+            let meta = fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
+            if meta.file_type().is_symlink() {
+                continue;
+            }
+            if meta.is_dir() {
+                let name = entry.file_name();
+                if matches!(
+                    name.to_str().unwrap_or(""),
+                    ".git" | ".godot" | ".kairo" | "node_modules"
+                ) {
+                    continue;
+                }
+                if depth < MAX_SCAN_DEPTH {
+                    pending.push((path, depth + 1));
+                }
+                continue;
+            }
+            if !meta.is_file()
+                || path.extension() != Some(OsStr::new("tscn"))
+                || meta.len() > 8 * 1024 * 1024
+            {
+                continue;
+            }
+            // Only the scene header may declare the scene's UID.
+            let mut file = fs::File::open(&path).map_err(|e| e.to_string())?;
+            let mut prefix = [0u8; 4096];
+            use std::io::Read;
+            let bytes = file.read(&mut prefix).map_err(|e| e.to_string())?;
+            let text = String::from_utf8_lossy(&prefix[..bytes]);
+            let header = text
+                .lines()
+                .find(|line| !line.trim().is_empty())
+                .unwrap_or("");
+            if !header.starts_with("[gd_scene ") || !header.ends_with(']') {
+                continue;
+            }
+            // Delimit UID token to avoid accepting a prefix of another UID.
+            let expected = format!("uid=\"{uid}\"");
+            if !header
+                .split_ascii_whitespace()
+                .any(|field| field == expected || field == format!("{expected}]"))
+            {
+                continue;
+            }
+            let relative = path.strip_prefix(root).map_err(|e| e.to_string())?;
+            let portable = format!("res://{}", relative.to_string_lossy().replace('\\', "/"));
+            if match_path.replace(portable).is_some() {
+                return Err(format!(
+                    "Godot scene UID {uid} is ambiguous between multiple scene files"
+                ));
+            }
+        }
+    }
+    match_path
+        .ok_or_else(|| format!("Godot scene UID {uid} was not found in project-owned text scenes"))
+}
+
 fn inspect_godot_scene(root: &Path, scene: &str) -> Result<String, String> {
-    let path = scene.strip_prefix("res://").ok_or(
-        "Godot main_scene is not a res:// path; UID-based entry resolution is not supported yet",
+    let owned_scene = if scene.starts_with("uid://") {
+        resolve_godot_scene_uid(root, scene)?
+    } else {
+        scene.to_owned()
+    };
+    let path = owned_scene.strip_prefix("res://").ok_or(
+        "Godot main_scene must be a project-relative res:// path or resolvable uid:// text scene",
     )?;
     if path.is_empty() || path.contains('\\') || path.contains('\0') {
         return Err("Godot startup scene must have a safe non-empty res:// path".into());
@@ -101,7 +189,7 @@ fn inspect_godot_scene(root: &Path, scene: &str) -> Result<String, String> {
     if !canonical.starts_with(root) {
         return Err("Godot startup scene escapes the source-game directory".into());
     }
-    Ok(scene.to_owned())
+    Ok(owned_scene)
 }
 
 fn executable_at(path: &Path) -> bool {
@@ -225,6 +313,7 @@ pub fn inspect_source_game(input: &Path) -> Result<SourceGameInspection, String>
     let mut script_files = 0_usize;
     let mut media_files = 0_usize;
     let mut native_candidates = Vec::new();
+    let mut candidates_truncated = false;
     let mut walked = 0_usize;
     let mut truncated = false;
 
@@ -304,7 +393,7 @@ pub fn inspect_source_game(input: &Path) -> Result<SourceGameInspection, String>
             ) {
                 media_files += 1;
             }
-            if matches!(extension.as_str(), "glb" | "gltf") && native_candidates.len() < 2 {
+            if matches!(extension.as_str(), "glb" | "gltf") {
                 // Only record portable scene paths suitable for existing Kairo
                 // glTF import. Never follow symbolic links or arbitrary paths.
                 if let Ok(relative) = path.strip_prefix(&root) {
@@ -320,7 +409,11 @@ pub fn inspect_source_game(input: &Path) -> Result<SourceGameInspection, String>
                         _ => false,
                     });
                     if portable {
-                        native_candidates.push(relative.to_string_lossy().replace('\\', "/"));
+                        if native_candidates.len() < 256 {
+                            native_candidates.push(relative.to_string_lossy().replace('\\', "/"));
+                        } else {
+                            candidates_truncated = true;
+                        }
                     }
                 }
             }
@@ -333,11 +426,20 @@ pub fn inspect_source_game(input: &Path) -> Result<SourceGameInspection, String>
         ));
     }
 
-    let native_scene_candidate = if !truncated && native_candidates.len() == 1 {
-        Some(native_candidates.remove(0))
-    } else {
-        None
-    };
+    native_candidates.sort();
+    native_candidates.dedup();
+    if candidates_truncated {
+        notes.push(
+            "More than 256 3D scene candidates found; explicit scene discovery is incomplete"
+                .into(),
+        );
+    }
+    let native_scene_candidate =
+        if !truncated && !candidates_truncated && native_candidates.len() == 1 {
+            Some(native_candidates[0].clone())
+        } else {
+            None
+        };
     if native_scene_candidate.is_some() {
         notes.push("One portable 3D scene is available for native Kairo scene-only import; gameplay is not translated".into());
     } else if native_candidates.len() > 1 {
@@ -368,6 +470,7 @@ pub fn inspect_source_game(input: &Path) -> Result<SourceGameInspection, String>
         media_files,
         scanned_files,
         native_scene_candidate,
+        native_scene_candidates: native_candidates,
         original_runtime_available: runtime_available,
         notes,
     })
@@ -429,12 +532,30 @@ pub fn reconstruct_native_scene(
     display_name: &str,
     engine_version: &str,
 ) -> Result<PathBuf, String> {
+    reconstruct_native_scene_selected(root, display_name, engine_version, None)
+}
+
+/// Convert exactly one explicitly selected source-owned glTF/GLB scene.
+/// The chosen path MUST match the bounded, symlink-safe inventory.
+pub fn reconstruct_native_scene_selected(
+    root: &Path,
+    display_name: &str,
+    engine_version: &str,
+    selected: Option<&str>,
+) -> Result<PathBuf, String> {
     let info = inspect_source_game(root)?;
-    let path = info.native_scene_candidate.ok_or(
-        "This game has no unambiguous portable 3D scene; Kairo cannot reconstruct its gameplay. For a 2D Godot game, use Run Original instead")?;
+    let chosen = match selected {
+        Some(scene) if info.native_scene_candidates.iter().any(|v| v == scene) => {
+            scene.to_owned()
+        }
+        Some(_) => return Err("Chosen 3D scene is absent or unsafe; re-inspect the source game".into()),
+        None => info.native_scene_candidate.ok_or(
+            "Choose a specific glTF/GLB scene. A 2D Godot game needs a separate 2D gameplay converter; Run Original preserves its existing gameplay",
+        )?,
+    };
     crate::project::import_external_gltf_directory(
         &info.root,
-        Some(&path),
+        Some(&chosen),
         display_name,
         engine_version,
     )
@@ -502,6 +623,100 @@ mod tests {
         let info = inspect_source_game(dir.path()).unwrap();
         assert!(info.main_scene.is_none());
         assert!(!info.original_runtime_available);
+    }
+
+    #[test]
+    fn godot_uid_entry_scene_resolves_to_safe_project_owned_text_scene() {
+        let dir = tempfile::tempdir().unwrap();
+        game(dir.path());
+        fs::write(
+            dir.path().join("project.godot"),
+            "config_version=5\n[application]\nrun/main_scene=\"uid://abc123\"\n",
+        )
+        .unwrap();
+        fs::create_dir_all(dir.path().join("Levels")).unwrap();
+        fs::write(
+            dir.path().join("Levels/Start.tscn"),
+            "[gd_scene format=3 uid=\"uid://abc123\"]\n[node name=\"Start\" type=\"Node2D\"]\n",
+        )
+        .unwrap();
+        let info = inspect_source_game(dir.path()).unwrap();
+        assert_eq!(info.main_scene.as_deref(), Some("res://Levels/Start.tscn"));
+        // Resolving to a concrete path also enables the structural game graph.
+        let graph = crate::source_game_graph::inspect_godot_graph(dir.path()).unwrap();
+        assert_eq!(graph.source_scene, "res://Levels/Start.tscn");
+        assert_eq!(graph.nodes[0].name, "Start");
+    }
+
+    #[test]
+    fn godot_uid_duplicate_or_missing_entries_fail_closed() {
+        let dir = tempfile::tempdir().unwrap();
+        game(dir.path());
+        fs::write(
+            dir.path().join("project.godot"),
+            "config_version=5\n[application]\nrun/main_scene=\"uid://abc123\"\n",
+        )
+        .unwrap();
+        let scene =
+            "[gd_scene uid=\"uid://abc123\" format=3]\n[node name=\"Main\" type=\"Node2D\"]\n";
+        fs::write(dir.path().join("main.tscn"), scene).unwrap();
+        fs::write(dir.path().join("duplicate.tscn"), scene).unwrap();
+        let info = inspect_source_game(dir.path()).unwrap();
+        assert!(info.main_scene.is_none());
+        assert!(info.notes.iter().any(|s| s.contains("ambiguous")));
+        fs::remove_file(dir.path().join("duplicate.tscn")).unwrap();
+        fs::write(
+            dir.path().join("project.godot"),
+            "config_version=5\n[application]\nrun/main_scene=\"uid://missing\"\n",
+        )
+        .unwrap();
+        let info = inspect_source_game(dir.path()).unwrap();
+        assert!(info.main_scene.is_none());
+        assert!(info.notes.iter().any(|s| s.contains("not found")));
+    }
+
+    #[test]
+    fn choose_one_of_multiple_source_owned_3d_scenes_explicitly() {
+        let dir = tempfile::tempdir().unwrap();
+        game(dir.path());
+        fs::create_dir_all(dir.path().join("models")).unwrap();
+        for name in ["a.gltf", "b.gltf"] {
+            fs::write(
+                dir.path().join("models").join(name),
+                "{\"asset\":{\"version\":\"2.0\"}}",
+            )
+            .unwrap();
+        }
+        let info = inspect_source_game(dir.path()).unwrap();
+        assert_eq!(info.native_scene_candidate, None);
+        assert_eq!(
+            info.native_scene_candidates,
+            ["models/a.gltf".to_owned(), "models/b.gltf".to_owned()]
+        );
+        assert!(
+            reconstruct_native_scene_selected(dir.path(), "Demo", "0.1.0", Some("../outside.gltf"))
+                .is_err()
+        );
+        assert!(
+            reconstruct_native_scene_selected(
+                dir.path(),
+                "Demo",
+                "0.1.0",
+                Some("models/absent.gltf")
+            )
+            .is_err()
+        );
+        let imported =
+            reconstruct_native_scene_selected(dir.path(), "Demo", "0.1.0", Some("models/b.gltf"))
+                .unwrap();
+        assert!(imported.ends_with("KairoImported.kproject"));
+        let manifest = fs::read_to_string(dir.path().join(".kairo/Assets.kassets")).unwrap();
+        assert!(manifest.contains("models/b.gltf"));
+        // Never replace an existing author's generated project on repeat import.
+        assert!(
+            reconstruct_native_scene_selected(dir.path(), "Demo", "0.1.0", Some("models/a.gltf"))
+                .is_err()
+        );
     }
 
     #[test]

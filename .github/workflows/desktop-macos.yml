@@ -1,0 +1,64 @@
+name: Build Kairo desktop launcher (macOS)
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/desktop-macos.yml'
+      - 'src-tauri/tauri.conf.json'
+      - 'src-tauri/src/**'
+      - 'src/**'
+      - 'package-lock.json'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/desktop-macos.yml'
+      - 'src-tauri/tauri.conf.json'
+
+permissions:
+  contents: read
+
+jobs:
+  unsigned-macos-app:
+    name: Native Kairo.app bundle
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+      - name: Install locked frontend dependencies
+        run: npm ci --ignore-scripts
+      - name: Verify frontend and security before packaging
+        run: |
+          npm run build
+          npm audit --audit-level=high
+      - name: Build actual unsigned desktop app
+        run: npx tauri build --bundles app
+      - name: Assert Kairo opens with the Hub
+        shell: bash
+        run: |
+          APP="src-tauri/target/release/bundle/macos/Kairo.app"
+          test -d "$APP"
+          test -f "$APP/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleName' "$APP/Contents/Info.plist"
+          EXE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Contents/Info.plist")"
+          if [[ "$EXE" != "kairo-hub" || ! -x "$APP/Contents/MacOS/kairo-hub" ]]; then
+            echo "Rejected macOS bundle: no real KairoHub GUI entrypoint" >&2
+            find "$APP/Contents/MacOS" -maxdepth 1 -type f -print
+            exit 3
+          fi
+          if [[ -x "$APP/Contents/MacOS/kairo-hub-inspect-game" ]]; then
+            echo "Inspector CLI was bundled as executable; verify GUI is still primary."
+          fi
+      - name: Upload unsigned desktop app for manual testing
+        uses: actions/upload-artifact@v7
+        with:
+          name: Kairo-macOS-unsigned-app
+          path: src-tauri/target/release/bundle/macos/Kairo.app
+          if-no-files-found: error

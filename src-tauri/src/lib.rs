@@ -1,6 +1,7 @@
 pub mod project;
 pub mod source_game;
 pub mod source_game_graph;
+pub mod source_game_migration;
 
 use project::{EngineInstallation, HubState, PackageArtifact, ProjectHealth, RecoverySnapshotInfo};
 use std::fs;
@@ -55,7 +56,16 @@ fn register_discovered_engine(state: &mut HubState) {
             state.engine_roots.push(root.clone());
         }
         if state.selected_engine.is_none() {
-            state.selected_engine = Some(root);
+            state.selected_engine = Some(root.clone());
+        }
+        // Show a real playable native project on first launch when the
+        // C++ engine workspace is already present. Never create demo files,
+        // change third-party projects or register an unvalidated fixture.
+        let playable = root.join("Samples/PlayableVerticalSlice/Project.kproject");
+        if project::inspect_project(&playable).is_valid()
+            && !state.recent_projects.contains(&playable)
+        {
+            state.remember(playable);
         }
     }
 }
@@ -254,6 +264,13 @@ fn inspect_source_game_graph(root: PathBuf) -> Result<source_game_graph::GodotSc
 }
 
 #[tauri::command]
+fn plan_source_game_migration(
+    root: PathBuf,
+) -> Result<source_game_migration::GodotMigrationPlan, String> {
+    source_game_migration::plan_godot_migration(&root)
+}
+
+#[tauri::command]
 fn link_source_game(root: PathBuf, state: State<'_, ManagedHubState>) -> Result<HubState, String> {
     let inspection = source_game::inspect_source_game(&root)?;
     let mut value = state
@@ -318,6 +335,7 @@ async fn launch_source_game(
 #[tauri::command]
 fn reconstruct_source_game(
     root: PathBuf,
+    entry_scene: Option<String>,
     state: State<'_, ManagedHubState>,
 ) -> Result<PathBuf, String> {
     let info = source_game::inspect_source_game(&root)?;
@@ -333,8 +351,12 @@ fn reconstruct_source_game(
         project::inspect_engine(selected)?.version
     };
     // Asset-only glTF/GLB conversion; no claim of gameplay reconstruction.
-    let created =
-        source_game::reconstruct_native_scene(&info.root, &info.display_name, &engine_version)?;
+    let created = source_game::reconstruct_native_scene_selected(
+        &info.root,
+        &info.display_name,
+        &engine_version,
+        entry_scene.as_deref(),
+    )?;
     let mut value = state
         .value
         .lock()
@@ -365,6 +387,23 @@ fn launch_editor(
         .as_ref()
         .map(|selected| selected.editor.as_path());
     project::launch_editor_with(&path, recovery_snapshot.as_deref(), editor).map(|child| child.id())
+}
+
+#[tauri::command]
+async fn launch_prebuilt_game(path: PathBuf) -> Result<u32, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut child = project::launch_prebuilt_game(&path)?;
+        let id = child.id();
+        std::thread::sleep(Duration::from_millis(450));
+        match child.try_wait().map_err(|error| error.to_string())? {
+            Some(status) => Err(format!(
+                "Prebuilt game exited before opening an interactive session: {status}. Check the project's runtime files."
+            )),
+            None => Ok(id),
+        }
+    })
+    .await
+    .map_err(|error| format!("Prebuilt game launch task failed: {error}"))?
 }
 
 #[tauri::command]
@@ -460,11 +499,13 @@ pub fn run() {
             import_external_gltf_project,
             inspect_source_game,
             inspect_source_game_graph,
+            plan_source_game_migration,
             link_source_game,
             register_godot_runtime,
             launch_source_game,
             reconstruct_source_game,
             launch_editor,
+            launch_prebuilt_game,
             launch_player,
             package_project
         ])
