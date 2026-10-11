@@ -1599,15 +1599,23 @@ fn compile_project_logic(project: &Path, installation: &EngineInstallation) -> R
 pub fn resolve_prebuilt_game(project: &Path) -> Result<(PathBuf, PathBuf), String> {
     let health = inspect_project(project);
     if !health.is_valid() {
-        return Err(format!("Cannot play this project: {}", health.errors.join("; ")));
+        return Err(format!(
+            "Cannot play this project: {}",
+            health.errors.join("; ")
+        ));
     }
-    let relative = health.descriptor.as_ref()
+    let relative = health
+        .descriptor
+        .as_ref()
         .and_then(|descriptor| descriptor.play_executable.as_ref())
-        .ok_or("This project has no built-in Play executable; select a Kairo engine installation")?;
+        .ok_or(
+            "This project has no built-in Play executable; select a Kairo engine installation",
+        )?;
     validate_relative_path(relative, "play-executable")?;
     let canonical_project = fs::canonicalize(project)
         .map_err(|error| format!("Cannot resolve project descriptor: {error}"))?;
-    let root = canonical_project.parent()
+    let root = canonical_project
+        .parent()
         .ok_or("Project descriptor has no parent directory")?;
 
     let mut candidate = root.to_path_buf();
@@ -1616,8 +1624,12 @@ pub fn resolve_prebuilt_game(project: &Path) -> Result<(PathBuf, PathBuf), Strin
             return Err("Play executable must use a project-relative path".into());
         };
         candidate.push(part);
-        let metadata = fs::symlink_metadata(&candidate)
-            .map_err(|error| format!("Cannot inspect Play executable '{}': {error}", relative.display()))?;
+        let metadata = fs::symlink_metadata(&candidate).map_err(|error| {
+            format!(
+                "Cannot inspect Play executable '{}': {error}",
+                relative.display()
+            )
+        })?;
         if metadata.file_type().is_symlink() {
             return Err("Play executable path may not cross symbolic links".into());
         }
@@ -1633,7 +1645,9 @@ pub fn resolve_prebuilt_game(project: &Path) -> Result<(PathBuf, PathBuf), Strin
 /// argv contract as an authored play-executable project.
 pub fn launch_prebuilt_game(project: &Path) -> Result<Child, String> {
     let (executable, descriptor) = resolve_prebuilt_game(project)?;
-    Command::new(&executable).arg(&descriptor).spawn()
+    Command::new(&executable)
+        .arg(&descriptor)
+        .spawn()
         .map_err(|error| format!("Cannot start this prebuilt game: {error}"))
 }
 
@@ -1644,8 +1658,12 @@ pub fn launch_player_with(
     project: &Path,
     installation: &EngineInstallation,
 ) -> Result<Child, String> {
-    if inspect_project(project).descriptor.as_ref()
-        .and_then(|descriptor| descriptor.play_executable.as_ref()).is_some() {
+    if inspect_project(project)
+        .descriptor
+        .as_ref()
+        .and_then(|descriptor| descriptor.play_executable.as_ref())
+        .is_some()
+    {
         return launch_prebuilt_game(project);
     }
     validate_player_operation(project, installation)?;
@@ -1941,9 +1959,17 @@ mod tests {
         let project = create_project(root.path(), "Shipped", "Shipped Game").unwrap();
         let game_root = project.parent().unwrap();
         fs::create_dir_all(game_root.join("Build")).unwrap();
-        fs::write(game_root.join("Build/GamePlayer"), b"built game placeholder").unwrap();
+        fs::write(
+            game_root.join("Build/GamePlayer"),
+            b"built game placeholder",
+        )
+        .unwrap();
         let previous = fs::read_to_string(&project).unwrap();
-        fs::write(&project, format!("{previous}play-executable \"Build/GamePlayer\"\n")).unwrap();
+        fs::write(
+            &project,
+            format!("{previous}play-executable \"Build/GamePlayer\"\n"),
+        )
+        .unwrap();
         let (game, descriptor) = resolve_prebuilt_game(&project).unwrap();
         assert_eq!(game, game_root.join("Build/GamePlayer"));
         assert_eq!(descriptor, fs::canonicalize(&project).unwrap());
@@ -1965,7 +1991,11 @@ mod tests {
         perms.set_mode(0o700);
         fs::set_permissions(&exe, perms).unwrap();
         let source = fs::read_to_string(&project).unwrap();
-        fs::write(&project, format!("{source}play-executable \"Build/GamePlayer\"\n")).unwrap();
+        fs::write(
+            &project,
+            format!("{source}play-executable \"Build/GamePlayer\"\n"),
+        )
+        .unwrap();
         // A successful process exit is enough for this headless unit gate.
         let mut process = launch_prebuilt_game(&project).unwrap();
         assert!(process.wait().unwrap().success());
@@ -1982,7 +2012,11 @@ mod tests {
         fs::write(external.path().join("GamePlayer"), b"external").unwrap();
         symlink(external.path(), game_root.join("External")).unwrap();
         let old = fs::read_to_string(&project).unwrap();
-        fs::write(&project, format!("{old}play-executable \"External/GamePlayer\"\n")).unwrap();
+        fs::write(
+            &project,
+            format!("{old}play-executable \"External/GamePlayer\"\n"),
+        )
+        .unwrap();
         let err = resolve_prebuilt_game(&project).unwrap_err();
         assert!(err.contains("symbolic links"), "{err}");
     }
