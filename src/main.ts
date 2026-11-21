@@ -1,3 +1,9 @@
+// TEACHING MAP — src/main.ts
+// TypeScript front-end for Tauri Hub views and commands. It calls Rust-registered commands
+// for project creation/import/launch; UI is not allowed to bypass validated backend
+// file/process operations.
+// See READING_ORDER.md for the Tauri/TypeScript and runtime ownership flow.
+
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import "./styles.css";

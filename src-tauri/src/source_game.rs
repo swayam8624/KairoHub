@@ -1,3 +1,9 @@
+// TEACHING MAP — src-tauri/src/source_game.rs
+// Inspects Godot/Unity/Unreal source projects without executing untrusted binaries. Source
+// discovery and conversion diagnostics are not proof that foreign game scripting works in
+// Kairo.
+// See READING_ORDER.md for the UI -> Tauri -> Kairo executable workflow.
+
 //! Read-only intake of source-controlled games from other engines.
 //!
 //! This is source inspection and an explicit "run in original engine" adapter.

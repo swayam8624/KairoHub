@@ -1,3 +1,8 @@
+// TEACHING MAP — src-tauri/src/bin/kairo-hub-inspect-game.rs
+// Standalone diagnostic CLI for foreign engine project inspection and compatibility
+// reports. It does not run or translate full Unity/Unreal/Godot gameplay.
+// See READING_ORDER.md for the UI -> Tauri -> Kairo executable workflow.
+
 //! Headless game-intake diagnostic used in CI and project support.
 use std::path::PathBuf;
 

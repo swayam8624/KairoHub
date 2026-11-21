@@ -1,3 +1,9 @@
+// TEACHING MAP — src-tauri/src/source_game_graph.rs
+// Builds bounded external scene/source graph metadata for inspection/migration reports.
+// Downstream UI may display this, but authoring semantics/foreign engine runtime are not
+// automatically reproduced.
+// See READING_ORDER.md for the UI -> Tauri -> Kairo executable workflow.
+
 //! Lossless-enough STRUCTURAL inspection of Godot text scenes.
 //!
 //! This is a typed intermediate representation, not a Godot interpreter.
