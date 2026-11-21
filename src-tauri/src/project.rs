@@ -1,6 +1,11 @@
 // SOURCE STUDY NOTE:
 // Project descriptor validation, atomic starter creation, engine discovery and child-process launch. This
 // is a trust boundary for filesystem paths and command arguments supplied by the UI.
+// See docs/SOURCE_READING_ORDER.md.
+
+// SOURCE STUDY NOTE:
+// Project descriptor validation, atomic starter creation, engine discovery and child-process launch. This
+// is a trust boundary for filesystem paths and command arguments supplied by the UI.
 // Related reading: docs/SOURCE_READING_ORDER.md.
 
 use serde::{Deserialize, Serialize};
