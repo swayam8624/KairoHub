@@ -1,3 +1,9 @@
+// TEACHING MAP — src-tauri/src/project.rs
+// Validates .kproject descriptors, project creation/repair, build profiles and
+// engine-process launch. The imported Kairo project is data; KairoProjectCompiler and
+// KairoPlayer are separate executables.
+// See READING_ORDER.md for the UI -> Tauri -> Kairo executable workflow.
+
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fs;
