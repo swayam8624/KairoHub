@@ -1,3 +1,8 @@
+// SOURCE STUDY NOTE:
+// Browser-side Tauri UI: assembles project/engine actions and invokes Rust commands. Types mirror
+// serializable Rust data but cannot replace Rust path and process validation.
+// Related reading: docs/SOURCE_READING_ORDER.md.
+
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import "./styles.css";
