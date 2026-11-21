@@ -1,3 +1,9 @@
+// TEACHING MAP — src-tauri/src/lib.rs
+// Central Tauri command registration and backend composition. TypeScript in src/main.ts
+// invokes validated Rust commands; project.rs and source_game.rs own project/reverse
+// intake logic.
+// See READING_ORDER.md for the UI -> Tauri -> Kairo executable workflow.
+
 pub mod project;
 pub mod source_game;
 pub mod source_game_graph;
