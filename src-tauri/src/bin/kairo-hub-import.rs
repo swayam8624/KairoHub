@@ -1,3 +1,8 @@
+// TEACHING MAP — src-tauri/src/bin/kairo-hub-import.rs
+// Standalone import/diagnostic CLI using Rust project/source-game APIs. Compare validated
+// source files and generated Kairo artifacts without overwriting original game content.
+// See READING_ORDER.md for the UI -> Tauri -> Kairo executable workflow.
+
 use std::path::PathBuf;
 
 fn main() {
