@@ -1,3 +1,4 @@
+//! TEACHING MAP: TAURI RUST PROJECT BOUNDARY: TypeScript UI calls backend commands in lib.rs. This module parses .kproject, validates paths and manifests, selects trusted engine installs, and invokes Editor/Player with explicit arguments. EngineCore defines the corresponding engine-side format; source_game.rs inspects foreign projects but cannot transparently execute them natively.
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fs;
