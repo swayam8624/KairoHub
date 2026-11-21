@@ -1,3 +1,13 @@
+// SOURCE STUDY NOTE:
+// Tauri command host and durable Hub state. UI invoke calls reach Rust handlers here; project.rs owns
+// validated project/file/process operations, and state changes need safe persistence.
+// See docs/SOURCE_READING_ORDER.md.
+
+// SOURCE STUDY NOTE:
+// Tauri command host and durable Hub state. UI invoke calls reach Rust handlers here; project.rs owns
+// validated project/file/process operations, and state changes need safe persistence.
+// Related reading: docs/SOURCE_READING_ORDER.md.
+
 pub mod project;
 pub mod source_game;
 pub mod source_game_graph;

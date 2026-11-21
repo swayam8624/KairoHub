@@ -1,5 +1,7 @@
 # KairoHub
 
+> **Teaching walkthrough:** The [linked source reading guide](docs/SOURCE_READING_ORDER.md) traces project inputs, state ownership and cross-repository API boundaries. Original source/documentation are proposed under the [MIT License](LICENSE) for learning and further development; external dependencies/assets retain their licenses.
+
 KairoHub is the Tauri 2 project manager and process launcher for Kairo Game Engine. It validates projects before launch, creates canonical starter projects atomically, imports an existing local Kairo `.kproject`, clones a strict HTTPS GitHub/GitLab repository containing exactly one valid Kairo project, tracks recent and favorite projects, selects a registered engine installation, packages descriptor-defined build profiles, and starts that installation's KairoEditor or KairoPlayer. Editor recovery remains an explicit separate launch mode.
 
 A local `.kproject` is a native Kairo project and launches through

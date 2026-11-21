@@ -1,3 +1,13 @@
+// SOURCE STUDY NOTE:
+// Inspects external Unity, Unreal or Godot game-source folders. Source metadata and compatibility reports
+// are not proof of successful gameplay conversion.
+// See docs/SOURCE_READING_ORDER.md.
+
+// SOURCE STUDY NOTE:
+// Inspects external Unity, Unreal or Godot game-source folders. Source metadata and compatibility reports
+// are not proof of successful gameplay conversion.
+// Related reading: docs/SOURCE_READING_ORDER.md.
+
 //! Read-only intake of source-controlled games from other engines.
 //!
 //! This is source inspection and an explicit "run in original engine" adapter.

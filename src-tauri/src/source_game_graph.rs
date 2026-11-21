@@ -1,3 +1,8 @@
+// SOURCE STUDY NOTE:
+// Models source-game graph relationships consumed by Hub inspection tools and reports; keep detection
+// evidence separate from imported runnable Kairo assets.
+// See docs/SOURCE_READING_ORDER.md.
+
 //! Lossless-enough STRUCTURAL inspection of Godot text scenes.
 //!
 //! This is a typed intermediate representation, not a Godot interpreter.
