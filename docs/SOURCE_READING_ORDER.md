@@ -10,21 +10,21 @@ Read each phase in order. Every link goes to a source file or directory in this 
 
 ## 1. User experience and build
 
-1. [`README.md`](README.md)
-2. [`package.json`](package.json)
-3. [`vite.config.ts`](vite.config.ts)
-4. [`src`](src)
-5. [`src-tauri/Cargo.toml`](src-tauri/Cargo.toml)
+1. [`README.md`](../README.md)
+2. [`package.json`](../package.json)
+3. [`vite.config.ts`](../vite.config.ts)
+4. [`src`](../src)
+5. [`src-tauri/Cargo.toml`](../src-tauri/Cargo.toml)
 
 ## 2. Rust command boundary
 
-1. [`src-tauri/src`](src-tauri/src)
-2. [`src-tauri/tauri.conf.json`](src-tauri/tauri.conf.json)
+1. [`src-tauri/src`](../src-tauri/src)
+2. [`src-tauri/tauri.conf.json`](../src-tauri/tauri.conf.json)
 
 ## 3. Validation and test provenance
 
-1. [`src-tauri`](src-tauri)
-2. [`README.md`](README.md)
+1. [`src-tauri`](../src-tauri)
+2. [`README.md`](../README.md)
 
 ## End-to-end interaction map
 
