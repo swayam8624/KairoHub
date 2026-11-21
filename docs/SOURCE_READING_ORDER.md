@@ -44,3 +44,29 @@ Native game conversion, foreign scripting and full release packaging are not cla
 - Preserve behavior during documentation-only edits; keep correctness changes in separate reviewed commits.
 - Link function names and tests where possible; mark claims as source-present, CI-observed, host-verified or research-evidenced.
 - License grants apply only to material for which the repository owner holds rights; third-party source, models, media and datasets keep their own notices.
+
+
+## Complete source-file inventory
+
+After the curated teaching path, follow this deterministic inventory of first-party source, scripts, shaders, and tests. Grouping is a suggested learning order, not an indication that every function is already annotated. Vendored dependencies, ROMs, binaries, data, media, and generated evidence are excluded.
+
+### Entry points and build (3)
+
+1. [`src-tauri/Cargo.toml`](../src-tauri/Cargo.toml)
+2. [`src-tauri/src/main.rs`](../src-tauri/src/main.rs)
+3. [`src/main.ts`](../src/main.ts)
+
+### Implementation and other source (10)
+
+1. [`postcss.config.js`](../postcss.config.js)
+2. [`src-tauri/build.rs`](../src-tauri/build.rs)
+3. [`src-tauri/src/bin/kairo-hub-import.rs`](../src-tauri/src/bin/kairo-hub-import.rs)
+4. [`src-tauri/src/bin/kairo-hub-inspect-game.rs`](../src-tauri/src/bin/kairo-hub-inspect-game.rs)
+5. [`src-tauri/src/lib.rs`](../src-tauri/src/lib.rs)
+6. [`src-tauri/src/project.rs`](../src-tauri/src/project.rs)
+7. [`src-tauri/src/source_game_graph.rs`](../src-tauri/src/source_game_graph.rs)
+8. [`src-tauri/src/source_game.rs`](../src-tauri/src/source_game.rs)
+9. [`src/vite-env.d.ts`](../src/vite-env.d.ts)
+10. [`vite.config.ts`](../vite.config.ts)
+
+Snapshot totals: 13 first-party source/build/test files, 31 tracked files overall. Re-audit when files are renamed or added.
