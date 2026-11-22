@@ -1,4 +1,5 @@
 # Teaching source map — KairoHub
+**Worked source walkthrough:** [Desktop UI → Rust project validation → selected engine launch](TAURI_PROJECT_TRUST_BOUNDARY.md).
 
 > A guided source-reading itinerary. It is not a test result or claim that every file is documented yet.
 
