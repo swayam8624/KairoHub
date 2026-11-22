@@ -1,4 +1,15 @@
-//! Read-only intake of source-controlled games from other engines.
+//! TEACHING MODULE: Conservative source-game intake is a *read/inspect*
+//! operation, not emulation, decompilation or project recompilation.
+//! Supported manifests identify an original engine, entry scene and
+//! inspectable assets; launching remains in that engine under a separate
+//! explicit host action. Only a supported glTF/GLB subset has native
+//! Kairo scene reconstruction through dedicated converters.
+//!
+//! Do not confuse path discovery with approval to execute source scripts
+//! or claim that a foreign-engine scene has equivalent Kairo gameplay.
+//! Project file size, traversal and executable selection are trust
+//! boundaries and belong in tests.
+ //! Read-only intake of source-controlled games from other engines.
 //!
 //! This is source inspection and an explicit "run in original engine" adapter.
 //! It is NOT binary decompilation or gameplay translation. Only glTF/GLB
