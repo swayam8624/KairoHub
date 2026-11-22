@@ -1,3 +1,14 @@
+//! TEACHING ENTRY POINT: Tauri registers narrow, host-owned Rust commands
+//! used by src/main.ts. The browser UI cannot directly read privileged
+//! filesystem paths, register an arbitrary executable or bypass the
+//! project health checks in project.rs. ManagedHubState persists favorites,
+//! selected installation and project records separately from authored .kproject.
+//!
+//! The state Mutex protects concurrent command handlers. Persistence uses
+//! a temporary file and backup/rename sequence; this does not make every
+//! external engine launch atomic. source_game/source_game_graph are read-only
+//! intake/adaptation paths unless a user explicitly requests conversion.
+//! The desktop runtime and dialog plugin are created in run().
 pub mod project;
 pub mod source_game;
 pub mod source_game_graph;
@@ -14,6 +25,9 @@ struct ManagedHubState {
     value: Mutex<HubState>,
 }
 
+// Persist a complete state snapshot via temporary file/backup. A crash
+// during the rename sequence is distinct from an application-level
+// project import; recovery and tests need to cover both.
 fn save_state(path: &Path, state: &HubState) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
@@ -427,6 +441,8 @@ async fn package_project(
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+/// Compose the Tauri shell and register approved command routes.
+/// The UI's generated requests are never executed as shell snippets.
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
