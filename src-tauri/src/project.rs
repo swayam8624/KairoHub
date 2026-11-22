@@ -1,4 +1,18 @@
-//! TEACHING MAP: TAURI RUST PROJECT BOUNDARY: TypeScript UI calls backend commands in lib.rs. This module parses .kproject, validates paths and manifests, selects trusted engine installs, and invokes Editor/Player with explicit arguments. EngineCore defines the corresponding engine-side format; source_game.rs inspects foreign projects but cannot transparently execute them natively.
+//! TEACHING MODULE: Trusted Rust boundary behind KairoHub's Tauri UI.
+//! TypeScript may request project import/inspection, but only Rust validates
+//! the bounded .kproject descriptor, project-relative paths, installed
+//! engine binaries and explicit Editor/Player process arguments.
+//!
+//! The portable schema is shared with KairoEngineCore::ProjectDescriptor.
+//! inspect_project reports health before import/launch; importing does not
+//! execute arbitrary project code. Engine installations must be selected and
+//! validated before a subprocess is started. Recovery snapshots have separate
+//! byte/file count limits and are not the same as successful game saves.
+//!
+//! Foreign Godot/source projects are *inspected*, not automatically executed
+//! as KairoPlayer games. Only supported glTF/GLB reconstruction has a
+//! native Kairo path; other projects must run in their original engine.
+//! See lib.rs's command registration and source_game.rs for host boundaries.
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fs;
@@ -228,6 +242,8 @@ fn validate_relative_path(path: &Path, field: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Parse a bounded, versioned project descriptor into portable paths and
+/// preferences. This does not create native renderer/gameplay resources.
 pub fn parse_project(source: &str) -> Result<ProjectDescriptor, String> {
     if source.len() as u64 > MAX_PROJECT_BYTES {
         return Err("project descriptor exceeds the 1 MiB safety limit".into());
@@ -1507,6 +1523,8 @@ pub fn clone_project(
     result
 }
 
+/// Launch a validated Editor binary with a checked project/snapshot path;
+/// an imported folder is not permission to execute an arbitrary command.
 pub fn launch_editor_with(
     project: &Path,
     recovery_snapshot: Option<&Path>,
@@ -1596,6 +1614,8 @@ fn compile_project_logic(project: &Path, installation: &EngineInstallation) -> R
 /// Builds attached visual logic, then launches the selected engine's player
 /// after KairoHub's structural inspection and KairoPlayer's runtime boundary.
 /// Command arguments are passed directly, never through a host shell.
+/// Resolve the selected engine installation and validated project before
+/// spawning Player. The host process is responsible for explicit user intent.
 pub fn launch_player_with(
     project: &Path,
     installation: &EngineInstallation,
